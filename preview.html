@@ -107,7 +107,7 @@ customElements.define("ha-chart-base", class extends HTMLElement {
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.7.0";
+const CARD_VERSION = "0.7.1";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -233,8 +233,9 @@ const I18N = {
     hide_legend: "Hide legend",
     hide_subtitle: "Hide subtitle (period and hints)",
     color_of: "Color {group}",
-    color_less: "Difference: color for less",
-    color_more: "Difference: color for more",
+    color_of_hint_graph: "line and band",
+    color_less: "Difference row: color for less",
+    color_more: "Difference row: color for more",
     group_before_short: "before",
     group_after_short: "after",
   },
@@ -312,8 +313,9 @@ const I18N = {
     hide_legend: "Legende ausblenden",
     hide_subtitle: "Untertitel ausblenden (Zeitraum und Hinweise)",
     color_of: "Farbe {group}",
-    color_less: "Differenz: Farbe für weniger",
-    color_more: "Differenz: Farbe für mehr",
+    color_of_hint_graph: "Linie und Band",
+    color_less: "Differenzzeile: Farbe für weniger",
+    color_more: "Differenzzeile: Farbe für mehr",
     group_before_short: "vorher",
     group_after_short: "nachher",
   },
@@ -1603,12 +1605,15 @@ class PatternCard extends HTMLElement {
     const neutral = this._resolveColor("var(--secondary-text-color)");
     // Gruppenfarben: compare_colors oder die Graph-Farben 2 und 3 von HA
     const cc = Array.isArray(cfg.compare_colors) ? cfg.compare_colors : [];
-    const workday = this._resolveColor(cssColor(cc[0]) || "var(--graph-color-2, var(--color-2, #efb118))");
-    const weekend = this._resolveColor(cssColor(cc[1]) || "var(--graph-color-3, var(--color-3, #ff725c))");
-    // Differenzzeile: difference_colors [weniger, mehr], sonst die Gruppenfarben
+    const second = "var(--graph-color-2, var(--color-2, #efb118))";
+    const third = "var(--graph-color-3, var(--color-3, #ff725c))";
+    const workday = this._resolveColor(cssColor(cc[0]) || second);
+    const weekend = this._resolveColor(cssColor(cc[1]) || third);
+    // Differenzzeile: nur difference_colors [weniger, mehr], sonst fest die Graph-Farben 2 und 3
+    // (nicht die Gruppenfarben, sonst verändert compare_colors auch die Differenz)
     const dc = Array.isArray(cfg.difference_colors) ? cfg.difference_colors : [];
-    const diffLess = cssColor(dc[0]) ? this._resolveColor(cssColor(dc[0])) : workday;
-    const diffMore = cssColor(dc[1]) ? this._resolveColor(cssColor(dc[1])) : weekend;
+    const diffLess = this._resolveColor(cssColor(dc[0]) || second);
+    const diffMore = this._resolveColor(cssColor(dc[1]) || third);
     return {
       today: this._resolveColor(user || defaultColor(st, kind, true)),
       reference: neutral,
@@ -1751,6 +1756,7 @@ class PatternCard extends HTMLElement {
       const base = parseRgb(this._resolveColor(colors.heat)) || [3, 169, 244, 1];
       stops = [[base[0], base[1], base[2], 0.06], [base[0], base[1], base[2], 1]];
     }
+    // Alle Zeilen, auch im Vergleich, in derselben Farbskala; compare_colors gilt nur im Graph
     const colorOf = (v) => rgbaString(interpolateStops(stops, (v - lo) / (hi - lo)));
 
     const diffTexts = this._diffTexts();
@@ -1762,7 +1768,7 @@ class PatternCard extends HTMLElement {
       return ds.length >= 2 && contiguous ? `${names[ds[0]]}–${names[ds[ds.length - 1]]}` : ds.map((d) => names[d]).join(", ");
     };
 
-    // Differenzzeile: zweifarbig um 0, Werktage-Farbe für negativ, Wochenende-Farbe für positiv
+    // Differenzzeile: zweifarbig um 0, difference_colors (weniger, mehr)
     const diff = m.diff && m.diff.some((c) => c.value != null) ? m.diff : null;
     let diffMax = 0;
     if (diff) for (const c of diff) if (c.value != null) diffMax = Math.max(diffMax, Math.abs(c.value));
@@ -1799,7 +1805,7 @@ class PatternCard extends HTMLElement {
       const h = Math.floor((k * slotMin) / 60);
       html += `<div class="hour" style="grid-row:${hourRow};grid-column:${k + 2} / span ${Math.min(step, S - k)}">${h}</div>`;
     }
-    const gradient = `linear-gradient(to right, ${stops.map((s, i) => `${rgbaString(s)} ${Math.round((i / (stops.length - 1)) * 100)}%`).join(", ")})`;
+    const gradient = `linear-gradient(to right, ${stops.map((x, i) => `${rgbaString(x)} ${Math.round((i / (stops.length - 1)) * 100)}%`).join(", ")})`;
     let legend = `<div class="legend"><span dir="ltr">${escapeHtml(withUnit(fmt(lo), unit))}</span><span class="bar" style="background:${gradient}"></span><span dir="ltr">${escapeHtml(withUnit(fmt(hi), unit))}</span></div>`;
     if (diff) {
       const dg = `linear-gradient(to right, ${rgbaString([neg[0], neg[1], neg[2], 1])}, ${rgbaString([neg[0], neg[1], neg[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 1])})`;
@@ -1829,7 +1835,8 @@ class PatternCard extends HTMLElement {
         const a = m.rows[0].cells[k];
         const b = m.rows[1].cells[k];
         const line = (r, cc, color) => `<span class="marker" style="background:${color}"></span>${escapeHtml(rowLabel(r))}: <span dir="ltr">${escapeHtml(cc.value == null ? "–" : withUnit(fmt(cc.value), unit))}</span>`;
-        body = `${escapeHtml(time)}<br>${line(m.rows[0], a, rgbaString(neg))}<br>${line(m.rows[1], b, rgbaString(pos))}<br>${escapeHtml(diffTexts.label)}: <span dir="ltr">${escapeHtml(c.value == null ? "–" : withUnit(signed(c.value), unit))}</span>`;
+        const mark = (cc) => (cc.value == null ? "var(--secondary-background-color)" : colorOf(cc.value));
+        body = `${escapeHtml(time)}<br>${line(m.rows[0], a, mark(a))}<br>${line(m.rows[1], b, mark(b))}<br>${escapeHtml(diffTexts.label)}: <span dir="ltr">${escapeHtml(c.value == null ? "–" : withUnit(signed(c.value), unit))}</span>`;
       } else {
         const valueText = c.value == null ? "–" : withUnit(fmt(c.value), unit);
         const color = c.value == null ? "var(--secondary-background-color)" : colorOf(c.value);
@@ -1926,14 +1933,17 @@ const editorSchema = (cfg, kind, t) => {
   }
   if (mode === "heatmap" && compare) schema.push({ name: "difference", selector: { boolean: {} } });
   if (compare) {
-    schema.push({
-      type: "grid",
-      name: "",
-      schema: [
-        { name: "compare_color_1", selector: { ui_color: {} } },
-        { name: "compare_color_2", selector: { ui_color: {} } },
-      ],
-    });
+    // Graph: Farben der beiden Referenzen; Heatmap: nur die Farben der Differenzzeile
+    if (mode === "graph") {
+      schema.push({
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "compare_color_1", selector: { ui_color: {} } },
+          { name: "compare_color_2", selector: { ui_color: {} } },
+        ],
+      });
+    }
     if (mode === "heatmap" && cfg.difference !== false) {
       schema.push({
         type: "grid",
@@ -2027,8 +2037,9 @@ class PatternCardEditor extends HTMLElement {
     };
     form.computeLabel = (s) => {
       const groups = cfg.compare === "before_after" ? ["group_before_short", "group_after_short"] : ["group_workday", "group_weekend"];
-      if (s.name === "compare_color_1") return this._t("color_of", { group: this._t(groups[0]) });
-      if (s.name === "compare_color_2") return this._t("color_of", { group: this._t(groups[1]) });
+      const hint = this._t("color_of_hint_graph");
+      if (s.name === "compare_color_1") return `${this._t("color_of", { group: this._t(groups[0]) })} (${hint})`;
+      if (s.name === "compare_color_2") return `${this._t("color_of", { group: this._t(groups[1]) })} (${hint})`;
       if (s.name === "difference_color_less") return this._t("color_less");
       if (s.name === "difference_color_more") return this._t("color_more");
       return this._t(s.name);
@@ -2076,6 +2087,7 @@ class PatternCardEditor extends HTMLElement {
     for (const k of ["compare_color_1", "compare_color_2", "difference_color_less", "difference_color_more"]) delete v[k];
     if (!v.compare || v.compare === "none") { delete v.compare_colors; delete v.difference_colors; }
     if (v.mode !== "heatmap" || v.difference === false) delete v.difference_colors;
+    if (v.mode === "heatmap") delete v.compare_colors;
     if (kind !== "counter") delete v.cumulative;
     Object.keys(v).forEach((k) => {
       if (v[k] === undefined || v[k] === "" || v[k] === null) delete v[k];

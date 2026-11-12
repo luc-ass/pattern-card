@@ -483,6 +483,13 @@ test("Karte graph: Vergleich mit zwei Referenzen und eigenen Farben", async () =
   assert.deepEqual(ids, ["band-low-workday-iqr", "band-workday-iqr", "ref-workday", "band-low-weekend-iqr", "band-weekend-iqr", "ref-weekend", "today"]);
   const legend = [...chart.options.legend.data].map((x) => x.name);
   assert.deepEqual(legend, ["Heute", "Werktage (Ø)", "Spanne Werktage", "Wochenende (Ø)", "Spanne Wochenende"]);
+  el.setConfig({ type: "custom:pattern-card", entity: "sensor.leistung", days: 14, compare: "weekday_weekend", compare_colors: ["#0000ff", "#ff0000"] });
+  await flush(20);
+  const c2 = el.shadowRoot.querySelector("ha-chart-base");
+  assert.deepEqual([...P.parseRgb(c2.data.find((s) => s.id === "ref-workday").color)].slice(0, 3), [0, 0, 255]);
+  assert.deepEqual([...P.parseRgb(c2.data.find((s) => s.id === "ref-weekend").color)].slice(0, 3), [255, 0, 0]);
+  el.setConfig({ type: "custom:pattern-card", entity: "sensor.leistung", days: 14, compare: "weekday_weekend" });
+  await flush(20);
   const ref = chart.data.find((s) => s.id === "ref-workday").data;
   const tip = chart.options.tooltip.formatter([{ value: ref[40] }]).textContent;
   assert.match(tip, /Werktage \(Ø\): 400 W \(\d+ Tage\)/);
@@ -631,10 +638,34 @@ test("Farben im Vergleich: compare_colors für Gruppen, difference_colors für d
     if (c.value < 0) assert.match(diffCells[k], /rgba\(0,255,0,/, `Slot ${k}: weniger in Grün`);
     if (c.value > 0) assert.match(diffCells[k], /rgba\(255,0,255,/, `Slot ${k}: mehr in Magenta`);
   });
-  const colors = el._colors();
-  assert.deepEqual([...P.parseRgb(colors.workday)].slice(0, 3), [0, 0, 255]);
-  assert.deepEqual([...P.parseRgb(colors.weekend)].slice(0, 3), [255, 0, 0]);
   el.remove();
+  // Zeilen bleiben in der normalen Farbskala, compare_colors wirkt in der Heatmap nicht
+  const rowCells = (ri) => [...el.shadowRoot.querySelectorAll(`.cell[data-r="${ri}"]`)].map((c) => c.getAttribute("style") || "").filter(Boolean);
+  assert.ok(rowCells(0).length && rowCells(0).every((x) => !/rgba\(0,0,255,|rgba\(0,255,0,/.test(x)), "Zeile vorher unverändert");
+  assert.ok(rowCells(1).every((x) => !/rgba\(255,0,0,|rgba\(255,0,255,/.test(x)), "Zeile nachher unverändert");
+  assert.equal(el.shadowRoot.querySelectorAll(".legend")[0].querySelectorAll(".bar").length, 1);
+  // Tooltip der Differenz: Marker der Zeilen wie die Zellen, nicht in den Differenzfarben
+  const dcell = el.shadowRoot.querySelector(".cell.diff[style]");
+  dcell.dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  const markers = [...el.shadowRoot.querySelectorAll(".tooltip .marker")].map((x) => x.getAttribute("style"));
+  assert.ok(markers.every((x) => !/rgba\(0,255,0,|rgba\(255,0,255,/.test(x)), markers.join(" | "));
+  el.remove();
+
+  // nur compare_colors: Differenzzeile bleibt bei den Standardfarben
+  const el2 = mount({ type: "custom:pattern-card", entity: "binary_sensor.t", mode: "heatmap", days: 14, statistic: "events", compare: "before_after", since, compare_colors: ["#0000ff", "#ff0000"] }, hass);
+  await flush();
+  const d2 = [...el2.shadowRoot.querySelectorAll(".cell.diff")].map((c) => c.getAttribute("style") || "").filter(Boolean);
+  assert.ok(d2.length && d2.every((x) => !/rgba\(0,0,255,|rgba\(255,0,0,/.test(x)), "Differenz unabhängig von compare_colors");
+  el2.remove();
+
+  // nur difference_colors: Zeilen bleiben in der normalen Farbskala
+  const el3 = mount({ type: "custom:pattern-card", entity: "binary_sensor.t", mode: "heatmap", days: 14, statistic: "events", compare: "before_after", since, difference_colors: ["#00ff00", "#ff00ff"] }, hass);
+  await flush();
+  const r3 = [...el3.shadowRoot.querySelectorAll('.cell[data-r="0"]')].map((c) => c.getAttribute("style") || "").filter(Boolean);
+  assert.ok(r3.length && r3.every((x) => !/rgba\(0,255,0,|rgba\(255,0,255,/.test(x)), "Zeilen unabhängig von difference_colors");
+  assert.equal(el3.shadowRoot.querySelectorAll(".legend")[0].querySelectorAll(".bar").length, 1);
+  el3.remove();
+
   const bad = w.document.createElement("pattern-card");
   assert.throws(() => bad.setConfig({ entity: "sensor.x", compare_colors: "red" }), /compare_colors/);
 });
@@ -658,6 +689,7 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.ok(names(P.editorSchema({ mode: "graph", compare: "before_after" }, "measurement", t)).includes("compare_color_1"));
   assert.ok(!names(P.editorSchema({ mode: "graph", compare: "before_after" }, "measurement", t)).includes("difference_color_less"));
   assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("difference_color_more"));
+  assert.ok(!names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("compare_color_1"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_legend"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("hide_legend"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_subtitle"));
@@ -683,7 +715,7 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.match(out.since, /^\d{4}-\d{2}-\d{2}$/);
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "before_after", since: "2026-11-12", difference_color_less: "green", difference_color_more: "red", compare_color_1: "blue" } } }));
   assert.deepEqual([...out.difference_colors], ["green", "red"]);
-  assert.deepEqual([...out.compare_colors], ["blue", null]);
+  assert.equal(out.compare_colors, undefined); // in der Heatmap ohne Wirkung, wird verworfen
   assert.equal(out.difference_color_less, undefined);
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "none", since: "2026-11-12" } } }));
   assert.equal(out.since, undefined);

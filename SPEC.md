@@ -132,14 +132,15 @@ Entschieden mit Lucas am 2026-11-12: zwei ineinanderliegende Perzentil-Bänder s
 - **Wenige Tage**: Unter 10 Tagen mit Daten entfällt 10–90 % (die Werte lägen nahe an Min und Max und schwankten stark), der Tooltip nennt „Spanne 10–90 % ab 10 Tagen“. Unter 4 Tagen gibt es nur Min–Max
 - **Vergleich** (`compare`): `both` zeigt je Referenz nur 25–75 %, sonst überlagern sich vier Flächen. Wer `wide` ausdrücklich setzt, bekommt je Referenz 10–90 %
 
-## Farben im Vergleich (0.7.0)
+## Farben im Vergleich (0.7.0, korrigiert in 0.7.1)
 
-Wunsch Lucas (2026-11-12): Die Farben müssen zur Bedeutung passen, etwa Temperatur (blau–rot) oder subjektiv (weniger = besser = grün).
+Wunsch Lucas (2026-11-12): Die Farben müssen zur Bedeutung passen, etwa Temperatur (blau–rot) oder subjektiv (weniger = besser = grün). Gemeint ist in der Heatmap nur die Vergleichsskala (Differenzzeile), die Zeilen darüber bleiben gleich gefärbt.
 
-- **`compare_colors: [erste, zweite]`**: Farben der Gruppen (Werktage/Wochenende bzw. vorher/nachher) für Linien, Bänder und Tooltip. Standard sind die Graph-Farben 2 und 3 von HA. Werte wie bei `color`: Theme-Name, Hex, CSS oder `[r, g, b]`, einzelne Einträge dürfen `null` sein
-- **`difference_colors: [weniger, mehr]`**: Farben der Differenzzeile; „weniger“ gilt, wenn die zweite Gruppe niedriger liegt (Nachher − Vorher < 0). Standard sind die Gruppenfarben, damit „mehr vorher“ in der Vorher-Farbe erscheint
-- Bewusst getrennt: Die Gruppenfarbe sagt „welcher Zeitraum“, die Differenzfarbe „besser oder schlechter“. Mit einer einzigen Liste ließe sich „weniger = grün“ nur über eine grüne Vorher-Linie erreichen
-- Editor: zwei Farbwähler je Liste, beschriftet nach Vergleich („Farbe vorher“, „Differenz: Farbe für weniger“); die Differenzfarben nur in der Heatmap mit Differenzzeile
+- **`compare_colors: [erste, zweite]`**: nur im Graph. Farben der beiden Referenzen (Werktage/Wochenende bzw. vorher/nachher) für Linien, Bänder und Tooltip. Standard sind die Graph-Farben 2 und 3 von HA. In der Heatmap ohne Wirkung, der Editor bietet sie dort nicht an und verwirft sie beim Umschalten
+- **`difference_colors: [weniger, mehr]`**: nur in der Heatmap. Farben der Differenzzeile und ihrer Legende; „weniger“ gilt, wenn die zweite Gruppe niedriger liegt (Nachher − Vorher < 0). Standard fest die Graph-Farben 2 und 3, unabhängig von `compare_colors`
+- **Zeilen der Heatmap** bleiben auch im Vergleich in der normalen Farbskala (`color`/`colors`). Der Tooltip der Differenzzeile zeigt die Werte beider Zeilen mit Markern in dieser Skala
+- Werte wie bei `color`: Theme-Name, Hex, CSS oder `[r, g, b]`, einzelne Einträge dürfen `null` sein
+- **Fehler in 0.7.0**: `difference_colors` fiel auf `compare_colors` zurück, und die Marker der Zeilen im Tooltip nutzten die Differenzfarben. Dadurch wirkte „Farbe vorher/nachher“ in der Heatmap nur auf die Differenz-Legende und „Differenz: Farbe für …“ scheinbar auf beides
 
 ## Vorher/Nachher (0.6.0)
 
