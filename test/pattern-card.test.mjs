@@ -522,6 +522,83 @@ test("Karte heatmap: Gruppenzeilen und Differenzzeile", async () => {
   el2.remove();
 });
 
+
+/* ---- Vorher/Nachher ---- */
+
+test("Vorher/Nachher: Gruppen am Stichtag, Modell und Differenz", () => {
+  const now = P.wallToTs(2026, 11, 20, 12, 0, TZ);
+  // ab 12.11. halber Wert
+  const days = filledDays(now, 14, (d) => (d.ymd.m === 11 && d.ymd.d >= 12 ? 50 : 100));
+  const cfg = { compare: "before_after", since: "2026-11-12" };
+  const groups = P.referenceGroups(cfg, 4);
+  assert.deepEqual([...groups].map((g) => g.key), ["before", "after"]);
+  const g = P.computeModel(days, { statistic: "mean", now, mode: "graph", groups });
+  assert.equal(g.references[0].expectedDays, 6); // 06.–11.11.
+  assert.equal(g.references[1].expectedDays, 8); // 12.–19.11., heute zählt nicht
+  assert.equal(g.references[0].stats[3].mean, 100);
+  assert.equal(g.references[1].stats[3].mean, 50);
+  const h = P.computeModel(days, { statistic: "mean", now, mode: "heatmap", rows: P.heatmapRows(cfg), difference: true });
+  assert.deepEqual([...h.rows].map((r) => r.key), ["before", "after"]);
+  assert.equal(h.diff[3].value, -50);
+  // Stichtag vor dem Zeitraum: nur noch „nachher“, keine Differenz
+  const h2 = P.computeModel(days, { statistic: "mean", now, mode: "heatmap", rows: P.heatmapRows({ compare: "before_after", since: "2026-01-01" }), difference: true });
+  assert.deepEqual([...h2.rows].map((r) => r.key), ["after"]);
+  assert.equal(h2.diff, undefined);
+  // Wochentagsfilter gilt in beiden Gruppen
+  const g3 = P.computeModel(days, { statistic: "mean", now, mode: "graph", groups: P.referenceGroups({ ...cfg, weekdays: ["mon"] }, 4) });
+  assert.deepEqual([...g3.references].map((r) => r.expectedDays), [1, 1]); // Montage 09.11. | 16.11. (20.11. ist ein Freitag)
+});
+
+test("Karte heatmap: Vorher/Nachher mit Beschriftung und Differenztexten", async () => {
+  const now = Date.now();
+  const entries = [];
+  for (let t = now - 20 * 24 * H; t < now; t += 2 * H) entries.push({ s: "on", lu: t / 1000 }, { s: "off", lu: (t + 10 * M) / 1000 });
+  const { hass } = makeHass(
+    { "binary_sensor.pumpe": { entity_id: "binary_sensor.pumpe", state: "off", attributes: { device_class: "running" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [];
+      const a = Date.parse(msg.start_time) / 1000;
+      const b = Date.parse(msg.end_time) / 1000;
+      return { "binary_sensor.pumpe": entries.filter((x) => x.lu >= a && x.lu < b) };
+    }
+  );
+  const since = new Date(now - 7 * 24 * H);
+  const iso = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, "0")}-${String(since.getDate()).padStart(2, "0")}`;
+  const el = mount({ type: "custom:pattern-card", entity: "binary_sensor.pumpe", mode: "heatmap", days: 14, statistic: "events", compare: "before_after", since: iso }, hass);
+  await flush();
+  const root = el.shadowRoot;
+  const labels = [...root.querySelectorAll(".wd")].map((x) => x.textContent);
+  assert.equal(labels.length, 3);
+  assert.match(labels[0], /^Vor \d+\. /);
+  assert.match(labels[1], /^Ab \d+\. /);
+  assert.equal(labels[2], "Δ");
+  assert.match(root.querySelectorAll(".legend")[1].textContent, /mehr vorher.*mehr nachher/);
+  el.remove();
+});
+
+test("Karte graph: Vorher/Nachher-Legende und Prüfung des Stichtags", async () => {
+  const el = w.document.createElement("pattern-card");
+  assert.throws(() => el.setConfig({ entity: "sensor.x", compare: "before_after" }), /since/);
+  assert.throws(() => el.setConfig({ entity: "sensor.x", compare: "before_after", since: "12.11.2026" }), /since/);
+  const now = Date.now();
+  const { hass } = makeHass(
+    { "sensor.p": { entity_id: "sensor.p", state: "1", attributes: { unit_of_measurement: "W", state_class: "measurement" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [{ statistic_id: "sensor.p", has_sum: false, mean_type: 1 }];
+      const step = msg.period === "hour" ? H : 5 * M;
+      const out = [];
+      for (let t = Math.ceil(Date.parse(msg.start_time) / step) * step; t + step <= Math.min(Date.parse(msg.end_time), now); t += step) out.push({ start: t, end: t + step, mean: 10 });
+      return { "sensor.p": out };
+    }
+  );
+  const card = mount({ type: "custom:pattern-card", entity: "sensor.p", days: 14, compare: "before_after", since: "2020-01-01" }, hass);
+  await flush(20);
+  // Stichtag vor dem Zeitraum: eine Referenz „Ab …“
+  const legend = [...card.shadowRoot.querySelector("ha-chart-base").options.legend.data].map((x) => x.name);
+  assert.match(legend[1], /^Ab 1\. Jan\.? \(Ø\)$/);
+  card.remove();
+});
+
 /* ---- Editor ---- */
 
 test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async () => {
@@ -535,6 +612,9 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.ok(!names(P.editorSchema({ mode: "graph", compare: "weekday_weekend" }, "measurement", t)).includes("reference"));
   assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "weekday_weekend" }, "state", t)).includes("difference"));
   assert.ok(!names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("difference"));
+  assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("since"));
+  assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("difference"));
+  assert.ok(!names(P.editorSchema({ mode: "graph", compare: "before_after" }, "measurement", t)).includes("reference"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_legend"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("hide_legend"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_subtitle"));
@@ -556,6 +636,11 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, statistic: "active" } } }));
   assert.equal(out.weekdays, undefined);
   assert.equal(out.statistic, undefined);
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "before_after" } } }));
+  assert.match(out.since, /^\d{4}-\d{2}-\d{2}$/);
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "none", since: "2026-11-12" } } }));
+  assert.equal(out.since, undefined);
+  assert.equal(out.compare, undefined);
 });
 
 for (const [name, fn] of tests) {

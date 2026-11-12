@@ -50,3 +50,8 @@ Leitlinie: so nativ wie möglich in Funktion und Aussehen (HA-Frontend als Refer
 
 ### Nachtrag 2026-11-12: Bänder (0.3.0)
 - Frage: zwei Standardabweichungen? Entscheidung: nein, stattdessen zwei Perzentil-Bänder (25–75 % innen, 10–90 % außen), ohne Option `sigma`
+
+### Nachtrag 2026-11-12: weitere Vergleiche (0.6.0)
+- Umsetzung nach Empfehlung: zuerst Vorher/Nachher ab Stichtag (Heizungsänderungen, Takten der Therme-Pumpe), „Tage nach Bedingung“ (kalt/mild, Anwesenheit) später, wenn Gas Heizen ein paar Wochen Daten hat
+- Testdashboard: Küche (Belegung), Garagentor (Ereignisse, Werktage/Wochenende), Therme-Takten (Ereignisse, vorher/nachher)
+- PV: besser eine eigene Kalender-Heatmap (Tag × Uhrzeit) mit gleicher Optik, als separates Projekt

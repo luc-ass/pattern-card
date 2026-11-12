@@ -103,6 +103,19 @@ Two rows instead of seven, plus a difference row (Δ = weekend − workdays). Th
 
 ![Heatmap comparing workdays and weekend with a difference row](docs/images/heatmap-compare.png)
 
+### Before vs. after a change
+
+```yaml
+type: custom:pattern-card
+entity: binary_sensor.boiler_pump_running
+mode: heatmap
+statistic: events
+compare: before_after
+since: "2026-11-12"
+```
+
+Did a new pump setting reduce how often the boiler starts? The heatmap shows the days before and from the given date on, plus a difference row (after − before). In graph mode both periods appear as two references.
+
 ## Options
 
 All options can also be set in the visual editor.
@@ -116,7 +129,8 @@ All options can also be set in the visual editor.
 | `weekdays` | all | Only use these weekdays (`mon` … `sun`) |
 | `statistic` | by type | `active` or `events` for states, `mean` for measurements, `sum` for counters |
 | `resolution` | `auto` | `auto`, `5min`, `15min`, `30min`, `hour`. Auto: graph 15 min where the data allows it, heatmap 1 h |
-| `compare` | `none` | `weekday_weekend`: the graph shows workdays and weekend as two references; the heatmap shows Mon–Fri and Sat–Sun plus a difference row |
+| `compare` | `none` | `weekday_weekend`: the graph shows workdays and weekend as two references; the heatmap shows Mon–Fri and Sat–Sun plus a difference row. `before_after`: days before vs. from `since` on, e.g. to check the effect of a change |
+| `since` | – | With `compare: before_after`: date of the change (`YYYY-MM-DD`) |
 | `reference` | `auto` | Graph without `compare`: `auto` uses the days of the same kind as today, `all` uses every day. Ignored when `weekdays` is set |
 | `difference` | `true` | Heatmap with `compare`: show the difference row |
 | `band` | `both` | Graph: `both` (10–90 % and 25–75 %), `iqr` (25–75 %), `wide` (10–90 %), `minmax`, `none` |

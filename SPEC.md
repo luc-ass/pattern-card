@@ -21,7 +21,8 @@ weekdays: [mon, tue, wed, thu, fri, sat, sun]   # Standard: alle
 statistic: mean             # active | events | mean | sum, Standard nach Typ (s. u.)
 resolution: auto            # auto | 5min | 15min | 30min | hour
 # nur graph
-compare: none               # none | weekday_weekend (ab 0.2.0)
+compare: none               # none | weekday_weekend (ab 0.2.0) | before_after (ab 0.6.0)
+since: 2026-11-12           # nur before_after: Stichtag, ab dem Tage als „nachher“ zählen
 reference: auto             # nur graph ohne compare: auto (Tage derselben Art wie heute) | all
 difference: true            # nur heatmap mit compare: Differenzzeile Wochenende − Werktage
 band: both                  # both (10–90 % und 25–75 %) | iqr | wide (10–90 %) | minmax | none
@@ -127,6 +128,17 @@ Entschieden mit Lucas am 2026-11-12: zwei ineinanderliegende Perzentil-Bänder s
 - **`wide`**: nur 10–90 %. **`iqr`**: nur 25–75 % (Standard bis 0.2.0). **`minmax`** und **`none`** wie bisher
 - **Wenige Tage**: Unter 10 Tagen mit Daten entfällt 10–90 % (die Werte lägen nahe an Min und Max und schwankten stark), der Tooltip nennt „Spanne 10–90 % ab 10 Tagen“. Unter 4 Tagen gibt es nur Min–Max
 - **Vergleich** (`compare`): `both` zeigt je Referenz nur 25–75 %, sonst überlagern sich vier Flächen. Wer `wide` ausdrücklich setzt, bekommt je Referenz 10–90 %
+
+## Vorher/Nachher (0.6.0)
+
+Entschieden mit Lucas am 2026-11-12, Anlass: Änderungen an der Heizung (ALPHA2 auf PP1, Absperrventil, Mischer) und das Takten der Therme-Pumpe (rund 10 Starts pro Stunde seit 23.10.).
+
+- **`compare: before_after` mit `since: YYYY-MM-DD`**: Tage vor dem Stichtag gegen Tage ab dem Stichtag, beide mit den gewählten Wochentagen. Graph: zwei Referenzen „Vor 12. Nov. (Ø)“ und „Ab 12. Nov. (Ø)“ in den Graph-Farben 2 und 3, heute wie immer nicht in der Referenz. Heatmap: Zeilen „Vor …“ und „Ab …“, Differenzzeile Nachher − Vorher („mehr vorher“/„mehr nachher“)
+- Liegt der Stichtag außerhalb des Zeitraums, entfällt die leere Gruppe (und damit die Differenzzeile)
+- Ohne gültiges `since` wirft die Konfiguration einen Fehler. Der Editor belegt `since` beim Umschalten mit heute vor und bietet einen Datumswähler
+- Intern sind die Gruppen allgemein: Wochentage plus optionaler Datumsfilter (`inGroup`). Darauf können später „Tage nach Bedingung“ (kalt/mild, Anwesenheit) aufsetzen
+
+**Nicht in dieser Karte:** eine Kalender-Heatmap (Tag × Uhrzeit ohne Mittelung, etwa für PV). Das wäre eine eigene Karte mit gleicher Optik (Lucas, 2026-11-12), vorgemerkt in der ROADMAP von ha-organisation.
 
 ## Vergleich Werktage/Wochenende (0.2.0)
 
