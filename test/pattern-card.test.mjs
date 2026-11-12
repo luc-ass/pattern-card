@@ -307,6 +307,9 @@ test("Karte heatmap: Bewegungsmelder aus dem Verlauf", async () => {
   el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14, hide_subtitle: true, name: " " });
   await flush();
   assert.equal(root.querySelector(".card-header").hidden, true);
+  // das hidden-Attribut muss auch gegen display: flex aus dem Stylesheet greifen.
+  // jsdom rechnet Stylesheets im Shadow DOM nicht aus, daher nur die Regel prüfen (Sichtprüfung im Browser)
+  assert.match(root.querySelector("style").textContent, /\[hidden\]\s*\{\s*display:\s*none !important;/);
   el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14 });
   await flush();
   const cells = root.querySelectorAll(".cell");

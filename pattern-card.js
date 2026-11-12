@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.5.1";
+const CARD_VERSION = "0.5.2";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -1013,6 +1013,8 @@ const STYLE = `
   :host { display: block; height: 100%; }
   ha-card { display: flex; flex-direction: column; height: 100%; position: relative; overflow: visible; }
   .card-header { display: flex; flex-direction: column; padding-bottom: 0; }
+  /* display: flex überstimmt sonst das hidden-Attribut */
+  [hidden] { display: none !important; }
   .card-header .sub {
     font-size: var(--ha-font-size-s, 12px);
     line-height: var(--ha-line-height-normal, 1.6);
