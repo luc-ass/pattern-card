@@ -616,10 +616,82 @@ test("Karte graph: Vorher/Nachher-Legende und Prüfung des Stichtags", async () 
   );
   const card = mount({ type: "custom:pattern-card", entity: "sensor.p", days: 14, compare: "before_after", since: "2020-01-01" }, hass);
   await flush(20);
-  // Stichtag vor dem Zeitraum: eine Referenz „Ab …“
+  // Stichtag lange zurück: vorher bleibt verankert, nachher sind die letzten 14 Tage
   const legend = [...card.shadowRoot.querySelector("ha-chart-base").options.legend.data].map((x) => x.name);
-  assert.match(legend[1], /^Ab 1\. Jan\.? \(Ø\)$/);
+  assert.match(legend[1], /^Vor 1\. Jan\.? \(Ø\)$/);
+  assert.match(legend.find((n) => /Letzte/.test(n)), /^Letzte 14 Tage \(Ø\)$/);
+  assert.match(card.shadowRoot.querySelector(".sub").textContent, /14 Tage vorher · 14 nachher/);
   card.remove();
+});
+
+test("periodPlan: verankerter Stichtag und relative Zeiträume", () => {
+  const { periodPlan } = w.__patternCard;
+  const today = { y: 2026, m: 11, d: 13 };
+  const k = (ymd) => `${ymd.y}-${ymd.m}-${ymd.d}`;
+  const ranges = (pp) => pp.ranges.map((r) => `${k(r.from)}..${k(r.to)}`).join(" ");
+  // Stichtag im Fenster: ein Abschnitt, vorher 28 Tage vor dem Stichtag, nachher ab Stichtag
+  let pp = periodPlan({ days: 28, compare: "before_after", since: "2026-11-10" }, today);
+  assert.equal(ranges(pp), "2026-10-13..2026-11-13");
+  assert.deepEqual([pp.before, pp.after, pp.truncated], [28, 3, false]);
+  // Stichtag lange zurück (Umzug): zwei Abschnitte mit Lücke, nachher auf die letzten 28 Tage gekürzt
+  pp = periodPlan({ days: 28, compare: "before_after", since: "2024-05-01" }, today);
+  assert.equal(ranges(pp), "2024-4-3..2024-5-1 2026-10-16..2026-11-13");
+  assert.deepEqual([pp.before, pp.after, pp.truncated], [28, 28, true]);
+  // Stichtag heute: nur vorher
+  pp = periodPlan({ days: 7, compare: "before_after", since: "2026-11-13" }, today);
+  assert.equal(ranges(pp), "2026-11-6..2026-11-13");
+  assert.deepEqual([pp.before, pp.after], [7, 0]);
+  // letzte Woche gegen 8 Wochen davor
+  pp = periodPlan({ days: 56, compare: "recent", recent_days: 7 }, today);
+  assert.equal(ranges(pp), "2026-9-11..2026-11-13");
+  assert.equal(k(pp.split), "2026-11-6");
+  assert.deepEqual([pp.before, pp.after], [56, 7]);
+  assert.equal(periodPlan({ compare: "recent" }, today).after, 7);
+  // ohne Vergleich wie bisher
+  assert.equal(ranges(periodPlan({ days: 3 }, today)), "2026-11-10..2026-11-13");
+});
+
+test("Karte heatmap: letzte Tage gegen die Zeit davor, Abschnitte mit Lücke", async () => {
+  const now = Date.now();
+  const calls = [];
+  const { hass } = makeHass(
+    { "sensor.p": { entity_id: "sensor.p", state: "1", attributes: { unit_of_measurement: "W", state_class: "measurement" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [{ statistic_id: "sensor.p", has_sum: false, mean_type: 1 }];
+      calls.push([Date.parse(msg.start_time), Date.parse(msg.end_time), msg.period]);
+      const out = [];
+      for (let t = Math.ceil(Date.parse(msg.start_time) / H) * H; t + H <= Math.min(Date.parse(msg.end_time), now); t += H) {
+        // in den letzten 7 Tagen doppelt so viel
+        out.push({ start: t, end: t + H, mean: t >= now - 7 * 24 * H ? 20 : 10 });
+      }
+      return { "sensor.p": out };
+    }
+  );
+  const card = mount({ type: "custom:pattern-card", entity: "sensor.p", mode: "heatmap", days: 21, compare: "recent", recent_days: 7, resolution: "hour" }, hass);
+  await flush(20);
+  const root = card.shadowRoot;
+  const labels = [...root.querySelectorAll(".wd")].map((x) => x.textContent);
+  assert.deepEqual(labels.slice(0, 2), ["21 Tage davor", "Letzte 7 Tage"]);
+  assert.match(root.querySelector(".sub").textContent, /7 gegen 21 Tage davor/);
+  const m = card._model;
+  assert.equal(m.rows[0].nDays, 21);
+  // Differenz zuletzt − davor ≈ +10 (heute zählt mit seinen abgeschlossenen Stunden zu „zuletzt“)
+  const d = m.diff.map((c) => c.value).filter((v) => v != null);
+  assert.ok(d.length > 0 && d.every((v) => v > 8 && v <= 10.001), d.join());
+  // ein einziger Abschnitt, 28 Tage zurück
+  const refCall = calls.find((c) => c[1] - c[0] > 2 * 24 * H);
+  assert.ok(Math.abs((refCall[1] - refCall[0]) / (24 * H) - 28) < 0.1);
+  card.remove();
+
+  // Umzug vor langer Zeit: zwei getrennte Abfragen, die Lücke wird nicht geladen
+  calls.length = 0;
+  const card2 = mount({ type: "custom:pattern-card", entity: "sensor.p", mode: "heatmap", days: 14, compare: "before_after", since: "2024-05-01", resolution: "hour" }, hass);
+  await flush(20);
+  const refCalls = calls.filter((c) => c[1] - c[0] > 2 * 24 * H);
+  assert.equal(refCalls.length, 2);
+  assert.ok(refCalls.every((c) => Math.abs((c[1] - c[0]) / (24 * H) - 14) < 0.1));
+  assert.deepEqual([...card2.shadowRoot.querySelectorAll(".wd")].map((x) => x.textContent).slice(0, 2).map((t) => t.replace(/\.? 2024/, "")), ["Vor 1. Mai", "Letzte 14 Tage"]);
+  card2.remove();
 });
 
 
@@ -691,6 +763,10 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.ok(names(P.editorSchema({ mode: "graph" }, "counter", t)).includes("cumulative"));
   assert.ok(!names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("statistic"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("statistic"));
+  // relativer Vergleich: Feld „Letzte Tage“, kein Stichtag
+  const rec = names(P.editorSchema({ mode: "heatmap", compare: "recent" }, "state", t));
+  assert.ok(rec.includes("recent_days") && !rec.includes("since") && rec.includes("difference"));
+  assert.ok(!names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("recent_days"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("max"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("reference"));
   assert.ok(!names(P.editorSchema({ mode: "graph", compare: "weekday_weekend" }, "measurement", t)).includes("reference"));

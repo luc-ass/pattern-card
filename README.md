@@ -6,7 +6,7 @@ A Home Assistant Lovelace card that shows the **daily and weekly patterns** of a
 
 - **Graph**: today's curve against a reference period, by time of day. The reference is shown as a mean line with two nested bands (25–75 % and 10–90 % of the reference days).
 - **Heatmap**: weekday × time of day. Each cell shows the share of time active, the number of events, the mean or the consumption.
-- **Workdays vs. weekend**: compare both kinds of days in one graph, or in a heatmap with a difference row.
+- **Comparisons**: workdays vs. weekend, before vs. after a date, or the last days vs. the weeks before, in one graph or in a heatmap with a difference row.
 
 It is meant to look and behave like a native card. The graph uses Home Assistant's own chart component, and theme colors as well as number and time formats follow your profile. The card picks its data source by itself: long-term statistics where they exist, history otherwise. It comes with a visual editor and is translated into English and German.
 
@@ -115,9 +115,24 @@ since: "2026-11-12"
 difference_colors: [green, red]   # fewer starts = good
 ```
 
-Did a new pump setting reduce how often the boiler starts? The heatmap shows the days before and from the given date on, plus a difference row (after − before). In graph mode both periods appear as two references. `difference_colors` sets the colors for "less" and "more" in the difference row, here green for fewer starts. For a temperature you might use `[blue, red]`. The rows above always keep the normal heatmap color; in graph mode, `compare_colors` sets the colors of the two periods.
+Did a new pump setting reduce how often the boiler starts? The heatmap shows the `days` days before the given date and the days from that date on, plus a difference row (after − before). The "before" part stays anchored to the date, so it does not run out of the window over time. Once the date is more than `days` days ago, "after" uses the last `days` days, which works for a house move years ago as well. In graph mode both periods appear as two references. `difference_colors` sets the colors for "less" and "more" in the difference row, here green for fewer starts. For a temperature you might use `[blue, red]`. The rows above always keep the normal heatmap color; in graph mode, `compare_colors` sets the colors of the two periods.
 
 ![Heatmap comparing boiler starts before and after a change](docs/images/heatmap-before-after.png)
+
+### Last week vs. the weeks before
+
+```yaml
+type: custom:pattern-card
+entity: sensor.grid_power
+mode: heatmap
+compare: recent
+recent_days: 7
+days: 56
+```
+
+No fixed date: the last seven completed days against the eight weeks directly before them, with a difference row (recent − before). The window moves along every day.
+
+![Heatmap comparing the last week with the eight weeks before](docs/images/heatmap-recent.png)
 
 ## Options
 
@@ -128,14 +143,15 @@ All options can also be set in the visual editor.
 | `entity` | – | Entity to analyse (required) |
 | `mode` | `graph` | `graph` or `heatmap` |
 | `name` | friendly name | Card title; `false` or a single space hides it (in the visual editor, enter a space) |
-| `days` | `28` | Completed days before today used for the reference and the heatmap |
+| `days` | `28` | Completed days before today used for the reference and the heatmap. With `before_after`: days before `since`; with `recent`: days before the recent days |
 | `weekdays` | all | Only use these weekdays (`mon` … `sun`) |
 | `statistic` | by type | `active` or `events` for states, `mean` for measurements, `sum` for counters |
 | `resolution` | `auto` | `auto`, `5min`, `15min`, `30min`, `hour`. Auto: graph 15 min where the data allows it, heatmap 1 h |
-| `compare` | `none` | `weekday_weekend`: the graph shows workdays and weekend as two references; the heatmap shows Mon–Fri and Sat–Sun plus a difference row. `before_after`: days before vs. from `since` on, e.g. to check the effect of a change |
+| `compare` | `none` | `weekday_weekend`: the graph shows workdays and weekend as two references; the heatmap shows Mon–Fri and Sat–Sun plus a difference row. `before_after`: days before vs. from `since` on, e.g. to check the effect of a change. `recent`: the last `recent_days` days vs. the `days` days before them |
 | `compare_colors` | graph colors 2 and 3 | Graph with `compare`: colors of the two references (lines, bands, tooltip), e.g. `[blue, red]` |
 | `difference_colors` | graph colors 2 and 3 | Heatmap with `compare`: colors of the difference row and its legend for less and more, e.g. `[green, red]` when less is better. The rows above keep the normal heatmap color |
 | `since` | – | With `compare: before_after`: date of the change (`YYYY-MM-DD`) |
+| `recent_days` | `7` | With `compare: recent`: number of recent completed days |
 | `reference` | `auto` | Graph without `compare`: `auto` uses the days of the same kind as today, `all` uses every day. Ignored when `weekdays` is set |
 | `difference` | `true` | Heatmap with `compare`: show the difference row |
 | `band` | `both` | Graph: `both` (10–90 % and 25–75 %), `iqr` (25–75 %), `wide` (10–90 %), `minmax`, `none` |
@@ -158,7 +174,7 @@ All options can also be set in the visual editor.
 | Counters (`total`, `total_increasing`) | Long-term statistics | consumption |
 | Numeric sensors without statistics | History | time-weighted mean |
 
-- **History only reaches back as far as the recorder keeps it** (`recorder: purge_keep_days`, 10 days by default). For a longer reference, raise it.
+- **History only reaches back as far as the recorder keeps it** (`recorder: purge_keep_days`, 10 days by default). For a longer reference, raise it. Long-term statistics are kept indefinitely (hourly), so a `before_after` date far in the past works best with measurements and counters.
 - **Resolution**: the 5-minute statistics are kept for the same time as the history. If they do not cover the whole period, the graph falls back to hourly values and says so below the title.
 - **Today is never part of the reference.** The heatmap only uses completed time slots.
 - **Time slots follow the wall clock** in the time zone of your profile; days with a daylight saving change are handled.

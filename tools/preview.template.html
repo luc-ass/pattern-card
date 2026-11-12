@@ -119,6 +119,12 @@ const power = (t) => {
   const a = 0.6 + rnd(d * 1.97) * 0.8;
   return 180 + peak((we ? 9.5 : 7) + s1, 0.8, 600 * a) + peak(12.5 + s2, 1, (we ? 900 : 300) * (0.5 + rnd(d * 5.3))) + peak(19 + s1 / 2, 1.5, 1100 * a) + rnd(Math.floor(t / 300e3)) * 250;
 };
+// Leistung mit neuem Gerät: seit einer Woche abends zusätzlich ein Trockner (für „letzte Tage gegen davor“)
+const recentFrom = Date.now() - 7 * 864e5;
+const powerNew = (t) => {
+  const h = localHour(t);
+  return power(t) + (t >= recentFrom ? 900 * Math.exp(-((h - 20.5) ** 2) / (2 * 0.9 * 0.9)) : 0);
+};
 // Bewegung Gäste-WC: kurze Besuche, häufiger morgens und abends
 // Therme: vor dem Stichtag häufige kurze Starts, danach seltener (für vorher/nachher)
 const SINCE = (() => { const d = new Date(Date.now() - 10 * 864e5); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
@@ -149,6 +155,7 @@ const motionEntries = (start, end) => {
 const states = {
   "sensor.leistung": { entity_id: "sensor.leistung", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
   "sensor.zaehler": { entity_id: "sensor.zaehler", state: "12345", attributes: { friendly_name: L("Stromzähler", "Grid energy"), unit_of_measurement: "kWh", state_class: "total_increasing", device_class: "energy" } },
+  "sensor.leistung_neu": { entity_id: "sensor.leistung_neu", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
   "binary_sensor.therme": { entity_id: "binary_sensor.therme", state: "off", attributes: { friendly_name: L("Therme Brenner", "Boiler burner"), device_class: "running" } },
   "binary_sensor.bewegung": { entity_id: "binary_sensor.bewegung", state: "off", attributes: { friendly_name: L("Bewegung Gäste-WC", "Guest toilet motion"), device_class: "motion" } },
 };
@@ -164,7 +171,7 @@ const hass = {
     const e = Math.min(Date.parse(msg.end_time), Date.now());
     const id = (msg.statistic_ids || msg.entity_ids)[0];
     if (msg.type === "recorder/get_statistics_metadata") {
-      if (id === "sensor.leistung") return [{ statistic_id: id, has_sum: false, mean_type: 1, unit_class: "power" }];
+      if (id === "sensor.leistung" || id === "sensor.leistung_neu") return [{ statistic_id: id, has_sum: false, mean_type: 1, unit_class: "power" }];
       if (id === "sensor.zaehler") return [{ statistic_id: id, has_sum: true, mean_type: 0, unit_class: "energy" }];
       return [];
     }
@@ -173,7 +180,8 @@ const hass = {
       const rows = [];
       for (let t = Math.ceil(s / step) * step; t + step <= e; t += step) {
         let m = 0;
-        for (let u = t; u < t + step; u += 300e3) m += power(u) / (step / 300e3);
+        const f = id === "sensor.leistung_neu" ? powerNew : power;
+        for (let u = t; u < t + step; u += 300e3) m += f(u) / (step / 300e3);
         rows.push(id === "sensor.zaehler" ? { start: t, end: t + step, change: (m * step) / H / 1000 } : { start: t, end: t + step, mean: m });
       }
       return { [id]: rows };
@@ -194,6 +202,7 @@ const configs = [
   { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: L("Werktage gegen Wochenende", "Workdays vs. weekend") },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: L("Belegung Werktage/Wochenende", "Occupancy: workdays vs. weekend") },
   { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, difference_colors: ["green", "red"], name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
+  { type: "custom:pattern-card", entity: "sensor.leistung_neu", mode: "heatmap", days: 56, compare: "recent", recent_days: 7, color: "amber", name: L("Letzte Woche gegen die 8 Wochen davor", "Last week vs. the eight weeks before") },
 ];
 
 const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");

@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.7.3";
+const CARD_VERSION = "0.8.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -131,6 +131,20 @@ const I18N = {
     compare_none: "None",
     compare_weekday_weekend: "Workdays vs. weekend",
     compare_before_after: "Before vs. after a date",
+    compare_recent: "Recent days vs. the days before",
+    recent_days: "Recent days",
+    helper_recent_days: "The last completed days, compared with the days before them",
+    helper_days_before_after: "Days before the date; “after” uses at most as many recent days",
+    helper_days_recent: "Days before the recent days",
+    group_recent_after: "Last {n} days",
+    group_recent_before: "{n} days before",
+    group_recent_after_short: "recent",
+    group_recent_before_short: "before",
+    diff_label_recent: "Recent − before",
+    more_recent: "more recently",
+    more_earlier: "more before",
+    days_before_after: "{before} days before · {after} after",
+    days_recent: "{after} vs. {before} days before",
     since: "Date of the change",
     helper_since: "Days from this date on count as “after”",
     reference: "Reference days",
@@ -212,6 +226,20 @@ const I18N = {
     compare_none: "Kein Vergleich",
     compare_weekday_weekend: "Werktage gegen Wochenende",
     compare_before_after: "Vorher gegen nachher (Stichtag)",
+    compare_recent: "Letzte Tage gegen die Zeit davor",
+    recent_days: "Letzte Tage",
+    helper_recent_days: "Die letzten abgeschlossenen Tage, verglichen mit den Tagen davor",
+    helper_days_before_after: "Tage vor dem Stichtag; „nachher“ nutzt höchstens so viele letzte Tage",
+    helper_days_recent: "Tage vor den letzten Tagen",
+    group_recent_after: "Letzte {n} Tage",
+    group_recent_before: "{n} Tage davor",
+    group_recent_after_short: "zuletzt",
+    group_recent_before_short: "davor",
+    diff_label_recent: "Zuletzt − davor",
+    more_recent: "mehr zuletzt",
+    more_earlier: "mehr davor",
+    days_before_after: "{before} Tage vorher · {after} nachher",
+    days_recent: "{after} gegen {before} Tage davor",
     since: "Stichtag der Änderung",
     helper_since: "Tage ab diesem Datum zählen als „nachher“",
     reference: "Referenztage",
@@ -319,7 +347,10 @@ const selectedWeekdays = (cfg) => {
 
 const WORKDAYS = [0, 1, 2, 3, 4];
 const WEEKEND = [5, 6];
-const COMPARE_MODES = ["none", "weekday_weekend", "before_after"];
+const COMPARE_MODES = ["none", "weekday_weekend", "before_after", "recent"];
+const DEFAULT_RECENT_DAYS = 7;
+/** Vergleiche, die am Datum trennen (Gruppen vorher/nachher) */
+const isSplitCompare = (cfg) => cfg.compare === "before_after" || cfg.compare === "recent";
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** "YYYY-MM-DD" → Schlüssel YYYYMMDD, sonst null */
@@ -332,10 +363,10 @@ const ymdKey = (ymd) => ymd.y * 10000 + ymd.m * 100 + ymd.d;
 /** gehört ein Tag zur Gruppe? Wochentag und, falls gesetzt, Datumsfilter */
 const inGroup = (g, d) => g.weekdays.has(d.weekday) && (!g.filter || g.filter(d));
 
-/** Vorher/Nachher: gewählte Wochentage, getrennt am Stichtag */
-const beforeAfterGroups = (cfg) => {
+/** Vorher/Nachher: gewählte Wochentage, getrennt am Stichtag (Schlüssel YYYYMMDD, ohne Angabe `since`) */
+const beforeAfterGroups = (cfg, split) => {
   const sel = selectedWeekdays(cfg);
-  const k = dateKey(cfg.since);
+  const k = split ?? dateKey(cfg.since);
   return [
     { key: "before", weekdays: sel, filter: (d) => ymdKey(d.ymd) < k },
     { key: "after", weekdays: sel, filter: (d) => ymdKey(d.ymd) >= k },
@@ -349,14 +380,14 @@ const REFERENCE_MODES = ["auto", "all"];
  * - reference: auto ohne eigene Wochentage → Tage derselben Art wie heute
  * - sonst eine Referenz aus den gewählten Wochentagen
  */
-const referenceGroups = (cfg, todayWeekday) => {
+const referenceGroups = (cfg, todayWeekday, split) => {
   const sel = selectedWeekdays(cfg);
   const pick = (list) => new Set(list.filter((d) => sel.has(d)));
   if (cfg.compare === "weekday_weekend") {
     return [{ key: "workday", weekdays: pick(WORKDAYS) }, { key: "weekend", weekdays: pick(WEEKEND) }]
       .filter((g) => g.weekdays.size);
   }
-  if (cfg.compare === "before_after") return beforeAfterGroups(cfg);
+  if (isSplitCompare(cfg)) return beforeAfterGroups(cfg, split);
   const explicit = Array.isArray(cfg.weekdays) && cfg.weekdays.length > 0;
   if ((cfg.reference || "auto") === "auto" && !explicit) {
     const key = WEEKEND.includes(todayWeekday) ? "weekend" : "workday";
@@ -366,7 +397,7 @@ const referenceGroups = (cfg, todayWeekday) => {
 };
 
 /** Zeilen der Heatmap: je gewähltem Wochentag, im Vergleich Werktage und Wochenende */
-const heatmapRows = (cfg) => {
+const heatmapRows = (cfg, split) => {
   const sel = selectedWeekdays(cfg);
   if (cfg.compare === "weekday_weekend") {
     return [
@@ -374,7 +405,7 @@ const heatmapRows = (cfg) => {
       { key: "weekend", weekdays: new Set(WEEKEND.filter((d) => sel.has(d))) },
     ].filter((r) => r.weekdays.size);
   }
-  if (cfg.compare === "before_after") return beforeAfterGroups(cfg);
+  if (isSplitCompare(cfg)) return beforeAfterGroups(cfg, split);
   return [...sel].sort((a, b) => a - b).map((d) => ({ key: WEEKDAYS[d], weekdays: new Set([d]) }));
 };
 
@@ -437,6 +468,50 @@ const ymdAdd = (ymd, n) => {
   return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
 };
 
+const ymdCmp = (a, b) => ymdKey(a) - ymdKey(b);
+const daysBetween = (a, b) => Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / DAY_MS);
+const parseYmd = (str) => {
+  const m = DATE_RE.exec(String(str ?? ""));
+  return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
+};
+
+/**
+ * Zeitplan der Referenz (ohne heute): zusammenhängende Abschnitte [from, to) in Tagen.
+ * - Standard: die letzten `days` Tage
+ * - before_after: `days` Tage vor `since` (fest), nachher ab `since`, höchstens die letzten `days` Tage
+ * - recent: die letzten `recent_days` Tage gegen die `days` Tage davor
+ * split: erster Tag „nachher“; before/after: Länge der Abschnitte in Tagen
+ */
+const periodPlan = (cfg, today) => {
+  const days = Math.max(1, Math.round(Number(cfg.days) || DEFAULT_DAYS));
+  if (cfg.compare === "recent") {
+    const r = Math.max(1, Math.round(Number(cfg.recent_days) || DEFAULT_RECENT_DAYS));
+    const split = ymdAdd(today, -r);
+    return { ranges: [{ from: ymdAdd(split, -days), to: today }], split, before: days, after: r, truncated: false };
+  }
+  if (cfg.compare === "before_after" && parseYmd(cfg.since)) {
+    const since = parseYmd(cfg.since);
+    const before = { from: ymdAdd(since, -days), to: ymdCmp(since, today) < 0 ? since : today };
+    const recentStart = ymdAdd(today, -days);
+    const after = { from: ymdCmp(since, recentStart) > 0 ? since : recentStart, to: today };
+    const parts = [before, after].filter((r) => ymdCmp(r.from, r.to) < 0);
+    // aneinanderstoßende Abschnitte zusammenfassen
+    const ranges = [];
+    for (const r of parts) {
+      const last = ranges[ranges.length - 1];
+      if (last && ymdCmp(last.to, r.from) >= 0) last.to = r.to;
+      else ranges.push({ ...r });
+    }
+    return {
+      ranges, split: since,
+      before: Math.max(0, daysBetween(before.from, before.to)),
+      after: Math.max(0, daysBetween(after.from, after.to)),
+      truncated: ymdCmp(after.from, since) > 0,
+    };
+  }
+  return { ranges: [{ from: ymdAdd(today, -days), to: today }], split: null, before: days, after: 0, truncated: false };
+};
+
 const weekdayOf = (ymd) => (new Date(Date.UTC(ymd.y, ymd.m - 1, ymd.d)).getUTCDay() + 6) % 7;
 
 const todayYmd = (now, tz) => {
@@ -453,11 +528,21 @@ const startOfDay = (ymd, tz) => wallToTs(ymd.y, ymd.m, ymd.d, 0, 0, tz);
  */
 const buildDays = (now, nDays, tz, slotMin) => {
   const today = todayYmd(now, tz);
+  return buildDaysFor([{ from: ymdAdd(today, -nDays), to: today }], today, tz, slotMin);
+};
+
+/** wie buildDays, für die Tage der Abschnitte [from, to) plus heute (Lücken zwischen Abschnitten erlaubt) */
+const buildDaysFor = (ranges, today, tz, slotMin) => {
   const S = Math.round(1440 / slotMin);
   const slotMs = slotMin * MIN_MS;
+  const ymds = [];
+  for (const r of ranges) {
+    for (let ymd = r.from; ymdCmp(ymd, r.to) < 0; ymd = ymdAdd(ymd, 1)) ymds.push(ymd);
+  }
+  ymds.push(today);
   const days = [];
-  for (let i = nDays; i >= 0; i--) {
-    const ymd = ymdAdd(today, -i);
+  for (const ymd of ymds) {
+    const i = daysBetween(ymd, today);
     const next = ymdAdd(ymd, 1);
     const start = startOfDay(ymd, tz);
     const end = startOfDay(next, tz);
@@ -1195,8 +1280,9 @@ class PatternCard extends HTMLElement {
       throw new Error("resolution must be auto, 5min, 15min, 30min or hour");
     }
     if (config.days !== undefined && !(Number(config.days) >= 1)) throw new Error("days must be at least 1");
-    if (config.compare !== undefined && !COMPARE_MODES.includes(config.compare)) throw new Error("compare must be none, weekday_weekend or before_after");
+    if (config.compare !== undefined && !COMPARE_MODES.includes(config.compare)) throw new Error("compare must be none, weekday_weekend, before_after or recent");
     if (config.compare === "before_after" && dateKey(config.since) === null) throw new Error("compare: before_after needs since: YYYY-MM-DD");
+    if (config.recent_days !== undefined && !(Number(config.recent_days) >= 1)) throw new Error("recent_days must be at least 1");
     if (config.reference !== undefined && !REFERENCE_MODES.includes(config.reference)) throw new Error("reference must be auto or all");
     for (const key of ["compare_colors", "difference_colors"]) {
       if (config[key] !== undefined && !(Array.isArray(config[key]) && config[key].length <= 2)) {
@@ -1372,12 +1458,12 @@ class PatternCard extends HTMLElement {
       }
       const statistic = resolveStatistic(cfg.statistic, info.kind);
       const plan = this._plan();
-      const days = Math.max(1, Math.round(Number(cfg.days) || DEFAULT_DAYS));
       const tz = timeZoneOf(hass);
       const now = Date.now();
       const today = todayYmd(now, tz);
       const todayStart = startOfDay(today, tz);
-      const refStart = startOfDay(ymdAdd(today, -days), tz);
+      const periods = periodPlan(cfg, today);
+      const spans = periods.ranges.map((r) => ({ start: startOfDay(r.from, tz), end: startOfDay(r.to, tz) }));
 
       if (ref || !this._ref || this._ref.todayStart !== todayStart) {
         let r;
@@ -1385,25 +1471,33 @@ class PatternCard extends HTMLElement {
           let period = plan.period;
           let slot = plan.slot;
           let coarse = false;
-          let rows = await this._fetchStats(refStart, todayStart, period, statistic);
+          const fetchAll = (p) => Promise.all(spans.map((sp) => this._fetchStats(sp.start, sp.end, p, statistic)));
+          let parts = await fetchAll(period);
           if (period === "5minute") {
-            // reicht die Kurzzeitstatistik nicht so weit zurück wie die Stundenstatistik, stündlich auswerten
-            const hourRows = await this._fetchStats(refStart, todayStart, "hour", statistic);
-            const first5 = rows.length ? Number(rows[0].start) : Infinity;
-            const firstH = hourRows.length ? Number(hourRows[0].start) : Infinity;
-            if (firstH < first5 - 60 * MIN_MS) {
-              rows = hourRows;
+            // reicht die Kurzzeitstatistik in einem Abschnitt nicht so weit zurück wie die Stundenstatistik, alles stündlich auswerten
+            const hourParts = await fetchAll("hour");
+            const short = parts.some((rows, i) => {
+              const first5 = rows.length ? Number(rows[0].start) : Infinity;
+              const firstH = hourParts[i].length ? Number(hourParts[i][0].start) : Infinity;
+              return firstH < first5 - 60 * MIN_MS;
+            });
+            if (short) {
+              parts = hourParts;
               period = "hour";
               slot = 60;
               coarse = true;
             }
           }
-          r = { rows, period, slot, coarse };
+          r = { parts: spans.map((sp, i) => ({ ...sp, rows: parts[i] })), period, slot, coarse };
         } else {
-          r = { entries: await this._fetchHistory(refStart, todayStart), slot: plan.slot, coarse: false };
+          const parts = await Promise.all(spans.map((sp) => this._fetchHistory(sp.start, sp.end)));
+          r = { parts: spans.map((sp, i) => ({ ...sp, entries: parts[i] })), slot: plan.slot, coarse: false };
         }
         if (token !== this._token) return;
-        this._ref = { ...r, todayStart, refStart, settled: now >= todayStart + REF_SETTLE_MS, days };
+        this._ref = {
+          ...r, todayStart, refStart: spans.length ? spans[0].start : todayStart,
+          settled: now >= todayStart + REF_SETTLE_MS, periods,
+        };
       }
 
       const refData = this._ref;
@@ -1417,22 +1511,25 @@ class PatternCard extends HTMLElement {
       this._today = { ...todayData, fetchedAt: now };
 
       // auswerten
-      const dayList = buildDays(now, refData.days, tz, refData.slot);
+      const pp = refData.periods;
+      const dayList = buildDaysFor(pp.ranges, today, tz, refData.slot);
       if (plan.source === "stats") {
-        accumulateStats(dayList, refData.rows, statistic, refData.period);
+        for (const part of refData.parts) accumulateStats(dayList, part.rows, statistic, refData.period);
         accumulateStats(dayList, this._today.rows, statistic, refData.period);
       } else {
         const mode = info.kind === "numeric" ? "numeric" : "state";
-        accumulateHistory(dayList, refData.entries, refStart, todayStart, info.domain, mode);
+        for (const part of refData.parts) accumulateHistory(dayList, part.entries, part.start, part.end, info.domain, mode);
         accumulateHistory(dayList, this._today.entries, todayStart, now, info.domain, mode);
       }
+      const split = pp.split ? ymdKey(pp.split) : undefined;
       this._model = computeModel(dayList, {
         statistic, now, mode: cfg.mode,
         cumulative: cfg.mode === "graph" && statistic === "sum" && !!cfg.cumulative,
-        groups: referenceGroups(cfg, dayList[dayList.length - 1].weekday),
-        rows: heatmapRows(cfg),
+        groups: referenceGroups(cfg, dayList[dayList.length - 1].weekday, split),
+        rows: heatmapRows(cfg, split),
         difference: !!cfg.compare && cfg.compare !== "none" && cfg.difference !== false,
       });
+      this._model.periods = pp;
       this._model.coarse = refData.coarse;
       this._model.tz = tz;
       this._model.now = now;
@@ -1474,7 +1571,10 @@ class PatternCard extends HTMLElement {
     const m = this._model;
     const parts = [];
     const days = Math.max(1, Math.round(Number(cfg.days) || DEFAULT_DAYS));
-    parts.push(this._t("days_n", { n: days }));
+    const pp = m?.periods;
+    if (pp && cfg.compare === "recent") parts.push(this._t("days_recent", { after: pp.after, before: pp.before }));
+    else if (pp && cfg.compare === "before_after") parts.push(this._t("days_before_after", { before: pp.before, after: pp.after }));
+    else parts.push(this._t("days_n", { n: days }));
     const sel = selectedWeekdays(cfg);
     if (sel.size < 7) {
       const names = weekdayNames(this._hass);
@@ -1559,6 +1659,13 @@ class PatternCard extends HTMLElement {
 
   /** Name einer Gruppe: Werktage, Wochenende, Vor/Ab <Datum> */
   _groupLabel(key) {
+    const cfg = this._config;
+    const pp = this._model?.periods || periodPlan(cfg, todayYmd(Date.now(), timeZoneOf(this._hass)));
+    if (cfg.compare === "recent" && (key === "before" || key === "after")) {
+      return key === "after" ? this._t("group_recent_after", { n: pp.after }) : this._t("group_recent_before", { n: pp.before });
+    }
+    // Nachher-Teil auf die letzten Tage gekürzt
+    if (key === "after" && pp.truncated) return this._t("group_recent_after", { n: pp.after });
     if (key === "before" || key === "after") {
       const m = DATE_RE.exec(String(this._config.since ?? ""));
       const date = m
@@ -1572,6 +1679,9 @@ class PatternCard extends HTMLElement {
 
   /** Texte der Differenzzeile je Vergleich */
   _diffTexts() {
+    if (this._config.compare === "recent") {
+      return { label: this._t("diff_label_recent"), neg: this._t("more_earlier"), pos: this._t("more_recent") };
+    }
     return this._config.compare === "before_after"
       ? { label: this._t("diff_label_before_after"), neg: this._t("more_before"), pos: this._t("more_after") }
       : { label: this._t("diff_label"), neg: this._t("more_workday"), pos: this._t("more_weekend") };
@@ -1855,6 +1965,7 @@ const editorSchema = (cfg, kind, t) => {
   ];
   const compare = !!cfg.compare && cfg.compare !== "none";
   if (cfg.compare === "before_after") schema.push({ name: "since", selector: { date: {} } });
+  if (cfg.compare === "recent") schema.push({ name: "recent_days", selector: { number: { min: 1, max: 365, mode: "box" } } });
   if (mode === "graph" && !compare) {
     schema.push({
       name: "reference",
@@ -1966,7 +2077,9 @@ class PatternCardEditor extends HTMLElement {
       statistic: resolveStatistic(cfg.statistic, kind),
     };
     form.computeLabel = (s) => {
-      const groups = cfg.compare === "before_after" ? ["group_before_short", "group_after_short"] : ["group_workday", "group_weekend"];
+      const groups = cfg.compare === "before_after" ? ["group_before_short", "group_after_short"]
+        : cfg.compare === "recent" ? ["group_recent_before_short", "group_recent_after_short"]
+          : ["group_workday", "group_weekend"];
       const hint = this._t("color_of_hint_graph");
       if (s.name === "compare_color_1") return `${this._t("color_of", { group: this._t(groups[0]) })} (${hint})`;
       if (s.name === "compare_color_2") return `${this._t("color_of", { group: this._t(groups[1]) })} (${hint})`;
@@ -1975,7 +2088,8 @@ class PatternCardEditor extends HTMLElement {
       return this._t(s.name);
     };
     form.computeHelper = (s) => ({
-      days: this._t("helper_days"),
+      days: this._t(cfg.compare === "before_after" ? "helper_days_before_after" : cfg.compare === "recent" ? "helper_days_recent" : "helper_days"),
+      recent_days: this._t("helper_recent_days"),
       resolution: this._t("helper_resolution"),
       reference: this._t("helper_reference"),
       since: this._t("helper_since"),
@@ -2003,6 +2117,7 @@ class PatternCardEditor extends HTMLElement {
         v.since = `${t.y}-${String(t.m).padStart(2, "0")}-${String(t.d).padStart(2, "0")}`;
       }
     } else delete v.since;
+    if (v.compare !== "recent" || Number(v.recent_days) === DEFAULT_RECENT_DAYS) delete v.recent_days;
     if (v.compare) delete v.reference;
     else delete v.difference;
     if (v.mode === "heatmap") delete v.reference;
@@ -2035,5 +2150,5 @@ window.__patternCard = {
   tzOffset, wallToTs, ymdAdd, weekdayOf, buildDays, forEachOverlap, accumulateStats, accumulateHistory,
   dayValues, cumulate, quantile, slotStats, computeModel, cssColor, defaultColor, parseRgb, interpolateStops,
   makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND, bandsFor, dateKey, inGroup,
-  axisFractionDigits, niceInterval, makeAxisFormatter,
+  axisFractionDigits, niceInterval, makeAxisFormatter, periodPlan, buildDaysFor,
 };

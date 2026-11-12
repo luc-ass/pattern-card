@@ -147,6 +147,16 @@ Wunsch Lucas (2026-11-12): Die Farben müssen zur Bedeutung passen, etwa Tempera
 - Werte wie bei `color`: Theme-Name, Hex, CSS oder `[r, g, b]`, einzelne Einträge dürfen `null` sein
 - **Fehler in 0.7.0**: `difference_colors` fiel auf `compare_colors` zurück, und die Marker der Zeilen im Tooltip nutzten die Differenzfarben. Dadurch wirkte „Farbe vorher/nachher“ in der Heatmap nur auf die Differenz-Legende und „Differenz: Farbe für …“ scheinbar auf beides
 
+## Feste und relative Zeiträume im Vergleich (0.8.0)
+
+Entschieden mit Lucas am 2026-11-13. Anlass: Mit festem Stichtag lief der Vorher-Teil aus dem Fenster „letzte `days` Tage“ heraus. Gewünscht sind außerdem relative Vergleiche wie „letzte Woche gegen die 8 Wochen davor“.
+
+- **`before_after` verankert:** Vorher = die `days` Tage vor `since`, fest. Nachher = ab `since`, höchstens die letzten `days` Tage (gleich lang, bleibt schnell, auch Jahre nach einem Umzug). Liegt `since` länger als `days` Tage zurück, entsteht eine Lücke zwischen beiden Abschnitten, die nicht geladen wird. Beschriftung „Vor 13. Nov.“ und „Ab 13. Nov.“, ist der Nachher-Teil abgeschnitten „Letzte 28 Tage“
+- **`compare: recent`, `recent_days` (Standard 7):** Nachher = die letzten `recent_days` abgeschlossenen Tage, Vorher = die `days` Tage direkt davor, ohne Überlappung. Beschriftung „Letzte 7 Tage“ und „56 Tage davor“, Differenz „Zuletzt − davor“
+- Untertitel nennt beide Längen („28 Tage vorher · 5 nachher“, „7 gegen 56 Tage davor“)
+- Datenquelle je Abschnitt: Statistik oder Verlauf wie bisher. Reicht die 5-Minuten-Statistik für einen Abschnitt nicht, werden alle stündlich ausgewertet. Verlauf gibt es nur so lange, wie der Recorder ihn hält, ältere Abschnitte bleiben dann leer („Daten aus n von m Tagen“)
+- Farben (`compare_colors`, `difference_colors`) gelten für beide Vergleiche gleich
+
 ## Vorher/Nachher (0.6.0)
 
 Entschieden mit Lucas am 2026-11-12, Anlass: Änderungen an der Heizung (ALPHA2 auf PP1, Absperrventil, Mischer) und das Takten der Therme-Pumpe (rund 10 Starts pro Stunde seit 23.10.).
