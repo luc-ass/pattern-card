@@ -193,7 +193,7 @@ const configs = [
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "graph", days: 28 },
   { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: L("Werktage gegen Wochenende", "Workdays vs. weekend") },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: L("Belegung Werktage/Wochenende", "Occupancy: workdays vs. weekend") },
-  { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
+  { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, difference_colors: ["green", "red"], name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
 ];
 
 const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");

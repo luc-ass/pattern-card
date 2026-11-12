@@ -112,9 +112,10 @@ mode: heatmap
 statistic: events
 compare: before_after
 since: "2026-11-12"
+difference_colors: [green, red]   # fewer starts = good
 ```
 
-Did a new pump setting reduce how often the boiler starts? The heatmap shows the days before and from the given date on, plus a difference row (after − before). In graph mode both periods appear as two references.
+Did a new pump setting reduce how often the boiler starts? The heatmap shows the days before and from the given date on, plus a difference row (after − before). In graph mode both periods appear as two references. `difference_colors` sets the colors for "less" and "more" in the difference row, here green for fewer starts. For a temperature you might use `[blue, red]`; `compare_colors` sets the colors of the two periods themselves.
 
 ![Heatmap comparing boiler starts before and after a change](docs/images/heatmap-before-after.png)
 
@@ -132,6 +133,8 @@ All options can also be set in the visual editor.
 | `statistic` | by type | `active` or `events` for states, `mean` for measurements, `sum` for counters |
 | `resolution` | `auto` | `auto`, `5min`, `15min`, `30min`, `hour`. Auto: graph 15 min where the data allows it, heatmap 1 h |
 | `compare` | `none` | `weekday_weekend`: the graph shows workdays and weekend as two references; the heatmap shows Mon–Fri and Sat–Sun plus a difference row. `before_after`: days before vs. from `since` on, e.g. to check the effect of a change |
+| `compare_colors` | graph colors 2 and 3 | With `compare`: colors of the two groups (lines, bands, tooltip), e.g. `[blue, red]` |
+| `difference_colors` | `compare_colors` | Heatmap with `compare`: colors of the difference row for less and more, e.g. `[green, red]` when less is better |
 | `since` | – | With `compare: before_after`: date of the change (`YYYY-MM-DD`) |
 | `reference` | `auto` | Graph without `compare`: `auto` uses the days of the same kind as today, `all` uses every day. Ignored when `weekdays` is set |
 | `difference` | `true` | Heatmap with `compare`: show the difference row |

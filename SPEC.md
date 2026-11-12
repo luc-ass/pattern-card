@@ -23,6 +23,8 @@ resolution: auto            # auto | 5min | 15min | 30min | hour
 # nur graph
 compare: none               # none | weekday_weekend (ab 0.2.0) | before_after (ab 0.6.0)
 since: 2026-11-12           # nur before_after: Stichtag, ab dem Tage als „nachher“ zählen
+compare_colors: [blue, red]  # ab 0.7.0: Farben der beiden Gruppen
+difference_colors: [green, red]  # ab 0.7.0: Differenzzeile weniger/mehr
 reference: auto             # nur graph ohne compare: auto (Tage derselben Art wie heute) | all
 difference: true            # nur heatmap mit compare: Differenzzeile Wochenende − Werktage
 band: both                  # both (10–90 % und 25–75 %) | iqr | wide (10–90 %) | minmax | none
@@ -129,6 +131,15 @@ Entschieden mit Lucas am 2026-11-12: zwei ineinanderliegende Perzentil-Bänder s
 - **`wide`**: nur 10–90 %. **`iqr`**: nur 25–75 % (Standard bis 0.2.0). **`minmax`** und **`none`** wie bisher
 - **Wenige Tage**: Unter 10 Tagen mit Daten entfällt 10–90 % (die Werte lägen nahe an Min und Max und schwankten stark), der Tooltip nennt „Spanne 10–90 % ab 10 Tagen“. Unter 4 Tagen gibt es nur Min–Max
 - **Vergleich** (`compare`): `both` zeigt je Referenz nur 25–75 %, sonst überlagern sich vier Flächen. Wer `wide` ausdrücklich setzt, bekommt je Referenz 10–90 %
+
+## Farben im Vergleich (0.7.0)
+
+Wunsch Lucas (2026-11-12): Die Farben müssen zur Bedeutung passen, etwa Temperatur (blau–rot) oder subjektiv (weniger = besser = grün).
+
+- **`compare_colors: [erste, zweite]`**: Farben der Gruppen (Werktage/Wochenende bzw. vorher/nachher) für Linien, Bänder und Tooltip. Standard sind die Graph-Farben 2 und 3 von HA. Werte wie bei `color`: Theme-Name, Hex, CSS oder `[r, g, b]`, einzelne Einträge dürfen `null` sein
+- **`difference_colors: [weniger, mehr]`**: Farben der Differenzzeile; „weniger“ gilt, wenn die zweite Gruppe niedriger liegt (Nachher − Vorher < 0). Standard sind die Gruppenfarben, damit „mehr vorher“ in der Vorher-Farbe erscheint
+- Bewusst getrennt: Die Gruppenfarbe sagt „welcher Zeitraum“, die Differenzfarbe „besser oder schlechter“. Mit einer einzigen Liste ließe sich „weniger = grün“ nur über eine grüne Vorher-Linie erreichen
+- Editor: zwei Farbwähler je Liste, beschriftet nach Vergleich („Farbe vorher“, „Differenz: Farbe für weniger“); die Differenzfarben nur in der Heatmap mit Differenzzeile
 
 ## Vorher/Nachher (0.6.0)
 

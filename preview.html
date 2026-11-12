@@ -107,7 +107,7 @@ customElements.define("ha-chart-base", class extends HTMLElement {
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.6.3";
+const CARD_VERSION = "0.7.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -232,6 +232,11 @@ const I18N = {
     difference: "Difference row (weekend − workdays)",
     hide_legend: "Hide legend",
     hide_subtitle: "Hide subtitle (period and hints)",
+    color_of: "Color {group}",
+    color_less: "Difference: color for less",
+    color_more: "Difference: color for more",
+    group_before_short: "before",
+    group_after_short: "after",
   },
   de: {
     today: "Heute",
@@ -306,6 +311,11 @@ const I18N = {
     difference: "Differenzzeile (Wochenende − Werktage)",
     hide_legend: "Legende ausblenden",
     hide_subtitle: "Untertitel ausblenden (Zeitraum und Hinweise)",
+    color_of: "Farbe {group}",
+    color_less: "Differenz: Farbe für weniger",
+    color_more: "Differenz: Farbe für mehr",
+    group_before_short: "vorher",
+    group_after_short: "nachher",
   },
 };
 
@@ -1271,6 +1281,11 @@ class PatternCard extends HTMLElement {
     if (config.compare !== undefined && !COMPARE_MODES.includes(config.compare)) throw new Error("compare must be none, weekday_weekend or before_after");
     if (config.compare === "before_after" && dateKey(config.since) === null) throw new Error("compare: before_after needs since: YYYY-MM-DD");
     if (config.reference !== undefined && !REFERENCE_MODES.includes(config.reference)) throw new Error("reference must be auto or all");
+    for (const key of ["compare_colors", "difference_colors"]) {
+      if (config[key] !== undefined && !(Array.isArray(config[key]) && config[key].length <= 2)) {
+        throw new Error(`${key} must be a list of two colors`);
+      }
+    }
     if (config.band !== undefined && !BAND_MODES.includes(config.band)) throw new Error("band must be both, iqr, wide, minmax or none");
     const prev = this._config;
     this._config = { mode: "graph", ...config };
@@ -1586,8 +1601,14 @@ class PatternCard extends HTMLElement {
     const kind = this._info?.kind || "state";
     const user = cssColor(cfg.color);
     const neutral = this._resolveColor("var(--secondary-text-color)");
-    const workday = this._resolveColor("var(--graph-color-2, var(--color-2, #efb118))");
-    const weekend = this._resolveColor("var(--graph-color-3, var(--color-3, #ff725c))");
+    // Gruppenfarben: compare_colors oder die Graph-Farben 2 und 3 von HA
+    const cc = Array.isArray(cfg.compare_colors) ? cfg.compare_colors : [];
+    const workday = this._resolveColor(cssColor(cc[0]) || "var(--graph-color-2, var(--color-2, #efb118))");
+    const weekend = this._resolveColor(cssColor(cc[1]) || "var(--graph-color-3, var(--color-3, #ff725c))");
+    // Differenzzeile: difference_colors [weniger, mehr], sonst die Gruppenfarben
+    const dc = Array.isArray(cfg.difference_colors) ? cfg.difference_colors : [];
+    const diffLess = cssColor(dc[0]) ? this._resolveColor(cssColor(dc[0])) : workday;
+    const diffMore = cssColor(dc[1]) ? this._resolveColor(cssColor(dc[1])) : weekend;
     return {
       today: this._resolveColor(user || defaultColor(st, kind, true)),
       reference: neutral,
@@ -1597,6 +1618,8 @@ class PatternCard extends HTMLElement {
         : { workday: neutral, weekend: neutral, before: neutral, after: neutral, reference: neutral },
       workday,
       weekend,
+      diffLess,
+      diffMore,
       heat: user || defaultColor(st, kind, false),
     };
   }
@@ -1744,8 +1767,8 @@ class PatternCard extends HTMLElement {
     let diffMax = 0;
     if (diff) for (const c of diff) if (c.value != null) diffMax = Math.max(diffMax, Math.abs(c.value));
     if (!(diffMax > 0)) diffMax = 1;
-    const neg = parseRgb(colors.workday) || [239, 177, 24, 1];
-    const pos = parseRgb(colors.weekend) || [255, 114, 92, 1];
+    const neg = parseRgb(colors.diffLess) || [239, 177, 24, 1];
+    const pos = parseRgb(colors.diffMore) || [255, 114, 92, 1];
     const diffColor = (v) => {
       const c = v < 0 ? neg : pos;
       return rgbaString([c[0], c[1], c[2], Math.min(1, Math.abs(v) / diffMax)]);
@@ -1902,6 +1925,26 @@ const editorSchema = (cfg, kind, t) => {
     });
   }
   if (mode === "heatmap" && compare) schema.push({ name: "difference", selector: { boolean: {} } });
+  if (compare) {
+    schema.push({
+      type: "grid",
+      name: "",
+      schema: [
+        { name: "compare_color_1", selector: { ui_color: {} } },
+        { name: "compare_color_2", selector: { ui_color: {} } },
+      ],
+    });
+    if (mode === "heatmap" && cfg.difference !== false) {
+      schema.push({
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "difference_color_less", selector: { ui_color: {} } },
+          { name: "difference_color_more", selector: { ui_color: {} } },
+        ],
+      });
+    }
+  }
   if (stats.length > 1) {
     schema.push({
       name: "statistic",
@@ -1974,11 +2017,22 @@ class PatternCardEditor extends HTMLElement {
       compare: "none",
       reference: "auto",
       difference: true,
+      compare_color_1: cfg.compare_colors?.[0],
+      compare_color_2: cfg.compare_colors?.[1],
+      difference_color_less: cfg.difference_colors?.[0],
+      difference_color_more: cfg.difference_colors?.[1],
       weekdays: [...WEEKDAYS],
       ...cfg,
       statistic: resolveStatistic(cfg.statistic, kind),
     };
-    form.computeLabel = (s) => this._t(s.name);
+    form.computeLabel = (s) => {
+      const groups = cfg.compare === "before_after" ? ["group_before_short", "group_after_short"] : ["group_workday", "group_weekend"];
+      if (s.name === "compare_color_1") return this._t("color_of", { group: this._t(groups[0]) });
+      if (s.name === "compare_color_2") return this._t("color_of", { group: this._t(groups[1]) });
+      if (s.name === "difference_color_less") return this._t("color_less");
+      if (s.name === "difference_color_more") return this._t("color_more");
+      return this._t(s.name);
+    };
     form.computeHelper = (s) => ({
       days: this._t("helper_days"),
       resolution: this._t("helper_resolution"),
@@ -2015,6 +2069,13 @@ class PatternCardEditor extends HTMLElement {
     if (v.difference === true) delete v.difference;
     if (v.hide_legend === false) delete v.hide_legend;
     if (v.hide_subtitle === false) delete v.hide_subtitle;
+    // Einzelfelder der Farbwähler wieder zu Listen zusammenfassen
+    const pair = (a, b) => (a || b ? [a ?? null, b ?? null] : undefined);
+    v.compare_colors = pair(v.compare_color_1, v.compare_color_2);
+    v.difference_colors = pair(v.difference_color_less, v.difference_color_more);
+    for (const k of ["compare_color_1", "compare_color_2", "difference_color_less", "difference_color_more"]) delete v[k];
+    if (!v.compare || v.compare === "none") { delete v.compare_colors; delete v.difference_colors; }
+    if (v.mode !== "heatmap" || v.difference === false) delete v.difference_colors;
     if (kind !== "counter") delete v.cumulative;
     Object.keys(v).forEach((k) => {
       if (v[k] === undefined || v[k] === "" || v[k] === null) delete v[k];
@@ -2136,7 +2197,7 @@ const configs = [
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "graph", days: 28 },
   { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: L("Werktage gegen Wochenende", "Workdays vs. weekend") },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: L("Belegung Werktage/Wochenende", "Occupancy: workdays vs. weekend") },
-  { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
+  { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, difference_colors: ["green", "red"], name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
 ];
 
 const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");

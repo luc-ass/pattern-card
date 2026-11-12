@@ -602,6 +602,43 @@ test("Karte graph: Vorher/Nachher-Legende und Prüfung des Stichtags", async () 
   card.remove();
 });
 
+
+test("Farben im Vergleich: compare_colors für Gruppen, difference_colors für die Differenz", async () => {
+  const now = Date.now();
+  const entries = [];
+  // vorher häufiger, nachher seltener → Differenz negativ („weniger“)
+  for (let t = now - 20 * 24 * H; t < now; t += (t < now - 7 * 24 * H ? 1 : 3) * H) entries.push({ s: "on", lu: t / 1000 }, { s: "off", lu: (t + 5 * M) / 1000 });
+  const { hass } = makeHass(
+    { "binary_sensor.t": { entity_id: "binary_sensor.t", state: "off", attributes: { device_class: "running" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [];
+      const a = Date.parse(msg.start_time) / 1000;
+      const b = Date.parse(msg.end_time) / 1000;
+      return { "binary_sensor.t": entries.filter((x) => x.lu >= a && x.lu < b) };
+    }
+  );
+  const d = new Date(now - 7 * 24 * H);
+  const since = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const el = mount({
+    type: "custom:pattern-card", entity: "binary_sensor.t", mode: "heatmap", days: 14, statistic: "events",
+    compare: "before_after", since, compare_colors: ["#0000ff", "#ff0000"], difference_colors: ["#00ff00", "#ff00ff"],
+  }, hass);
+  await flush();
+  const diffCells = [...el.shadowRoot.querySelectorAll(".cell.diff")].map((c) => c.getAttribute("style") || "");
+  const diff = el._model.diff;
+  assert.ok(diff.some((c) => c.value < 0), "Testdaten: nachher weniger");
+  diff.forEach((c, k) => {
+    if (c.value < 0) assert.match(diffCells[k], /rgba\(0,255,0,/, `Slot ${k}: weniger in Grün`);
+    if (c.value > 0) assert.match(diffCells[k], /rgba\(255,0,255,/, `Slot ${k}: mehr in Magenta`);
+  });
+  const colors = el._colors();
+  assert.deepEqual([...P.parseRgb(colors.workday)].slice(0, 3), [0, 0, 255]);
+  assert.deepEqual([...P.parseRgb(colors.weekend)].slice(0, 3), [255, 0, 0]);
+  el.remove();
+  const bad = w.document.createElement("pattern-card");
+  assert.throws(() => bad.setConfig({ entity: "sensor.x", compare_colors: "red" }), /compare_colors/);
+});
+
 /* ---- Editor ---- */
 
 test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async () => {
@@ -618,6 +655,9 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("since"));
   assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("difference"));
   assert.ok(!names(P.editorSchema({ mode: "graph", compare: "before_after" }, "measurement", t)).includes("reference"));
+  assert.ok(names(P.editorSchema({ mode: "graph", compare: "before_after" }, "measurement", t)).includes("compare_color_1"));
+  assert.ok(!names(P.editorSchema({ mode: "graph", compare: "before_after" }, "measurement", t)).includes("difference_color_less"));
+  assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "before_after" }, "state", t)).includes("difference_color_more"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_legend"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("hide_legend"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_subtitle"));
@@ -641,6 +681,10 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.equal(out.statistic, undefined);
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "before_after" } } }));
   assert.match(out.since, /^\d{4}-\d{2}-\d{2}$/);
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "before_after", since: "2026-11-12", difference_color_less: "green", difference_color_more: "red", compare_color_1: "blue" } } }));
+  assert.deepEqual([...out.difference_colors], ["green", "red"]);
+  assert.deepEqual([...out.compare_colors], ["blue", null]);
+  assert.equal(out.difference_color_less, undefined);
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "none", since: "2026-11-12" } } }));
   assert.equal(out.since, undefined);
   assert.equal(out.compare, undefined);
