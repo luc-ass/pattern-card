@@ -106,7 +106,7 @@ customElements.define("ha-chart-base", class extends HTMLElement {
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.3.0";
+const CARD_VERSION = "0.4.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -220,6 +220,7 @@ const I18N = {
     reference_all: "All days",
     helper_reference: "Only applies without your own selection of weekdays",
     difference: "Difference row (weekend − workdays)",
+    hide_legend: "Hide legend",
   },
   de: {
     today: "Heute",
@@ -283,6 +284,7 @@ const I18N = {
     reference_all: "Alle Tage",
     helper_reference: "Gilt nur ohne eigene Auswahl der Wochentage",
     difference: "Differenzzeile (Wochenende − Werktage)",
+    hide_legend: "Legende ausblenden",
   },
 };
 
@@ -993,7 +995,7 @@ const buildGraph = (model, ctx) => {
   const options = {
     xAxis: [{ id: "xAxis", type: "time", min: b[0], max: b[S] }],
     yAxis,
-    legend: { type: "custom", show: true, data: legendData },
+    legend: { type: "custom", show: !ctx.hideLegend, data: legendData },
     grid: { top: 15, left: 1, right: 1, bottom: 0, containLabel: true },
     tooltip: { trigger: "axis", renderMode: "html", confine: true, formatter: tooltipFormatter },
     // eigenes dataZoom schaltet Zoomen in ha-chart-base ab (_hasZoomableXAxis)
@@ -1514,6 +1516,7 @@ class PatternCard extends HTMLElement {
       colors: this._colors(),
       unit,
       band: this._config.band || "both",
+      hideLegend: !!this._config.hide_legend,
       cumulative,
       fmtNumber: this._fmt(),
       fmtTime: timeFormatter(this._hass, m.tz),
@@ -1623,6 +1626,7 @@ class PatternCard extends HTMLElement {
       legend += `<div class="legend"><span>${escapeHtml(this._t("more_workday"))}</span><span dir="ltr">${escapeHtml(withUnit(signed(-diffMax), unit))}</span><span class="bar" style="background:${dg}"></span><span dir="ltr">${escapeHtml(withUnit(signed(diffMax), unit))}</span><span>${escapeHtml(this._t("more_weekend"))}</span></div>`;
     }
 
+    if (cfg.hide_legend) legend = "";
     content.innerHTML = `<div class="heatmap" style="--pc-slots:${S};--pc-rows:${nRows}">${html}</div>${legend}`;
     this._chart = null;
 
@@ -1753,6 +1757,7 @@ const editorSchema = (cfg, kind, t) => {
     });
     if (kind === "counter") schema.push({ name: "cumulative", selector: { boolean: {} } });
     schema.push({ name: "color", selector: { ui_color: {} } });
+    schema.push({ name: "hide_legend", selector: { boolean: {} } });
   } else {
     schema.push({ name: "color", selector: { ui_color: {} } });
     schema.push({
@@ -1763,6 +1768,7 @@ const editorSchema = (cfg, kind, t) => {
         { name: "max", selector: { number: { mode: "box", step: "any" } } },
       ],
     });
+    schema.push({ name: "hide_legend", selector: { boolean: {} } });
   }
   return schema;
 };
@@ -1839,6 +1845,7 @@ class PatternCardEditor extends HTMLElement {
     if (v.mode === "heatmap") delete v.reference;
     if (v.reference === "auto") delete v.reference;
     if (v.difference === true) delete v.difference;
+    if (v.hide_legend === false) delete v.hide_legend;
     if (kind !== "counter") delete v.cumulative;
     Object.keys(v).forEach((k) => {
       if (v[k] === undefined || v[k] === "" || v[k] === null) delete v[k];

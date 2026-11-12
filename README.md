@@ -62,6 +62,7 @@ days: 56
 | `difference` | `true` | Heatmap with `compare`: show the difference row (weekend − workdays) |
 | `band` | `both` | Graph only: `both` (10–90 % and 25–75 % nested), `iqr` (25–75 %), `wide` (10–90 %), `minmax`, `none`. 10–90 % needs at least 10 days of data; with `compare`, `both` shows 25–75 % only |
 | `cumulative` | `false` | Graph, counters only: consumption since midnight |
+| `hide_legend` | `false` | Hide the legend (graph: series, heatmap: color scale), as in the native statistics graph card |
 | `color` | state color | Today's line / heatmap color (hex, CSS or theme color name) |
 | `colors` | – | Heatmap only: list of two or more colors, low → high |
 | `min`, `max` | from data | Heatmap only: scale limits |

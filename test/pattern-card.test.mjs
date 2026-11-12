@@ -321,6 +321,10 @@ test("Karte graph: Messwert aus der Statistik an ha-chart-base, ohne Zoom", asyn
   assert.deepEqual(ids, ["band-low-reference-iqr", "band-reference-iqr", "ref-reference", "today"]);
   assert.ok(Array.isArray(chart.options.dataZoom) && chart.options.dataZoom.length === 0);
   assert.equal(chart.zoomSlider, "never");
+  assert.equal(chart.options.legend.show, true);
+  el.setConfig({ type: "custom:pattern-card", entity: "sensor.leistung", days: 7, reference: "all", hide_legend: true });
+  await flush(20);
+  assert.equal(el.shadowRoot.querySelector("ha-chart-base").options.legend.show, false);
   assert.equal(chart.options.xAxis[0].type, "time");
   assert.equal(chart.options.yAxis.name, "W");
   const stat = calls.filter((c) => c.type === "recorder/statistics_during_period");
@@ -477,6 +481,10 @@ test("Karte heatmap: Gruppenzeilen und Differenzzeile", async () => {
   const el2 = mount({ type: "custom:pattern-card", entity: "binary_sensor.b", mode: "heatmap", days: 14, compare: "weekday_weekend", difference: false }, hass);
   await flush();
   assert.equal(el2.shadowRoot.querySelectorAll(".wd").length, 2);
+  el2.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.b", mode: "heatmap", days: 14, hide_legend: true });
+  await flush();
+  assert.equal(el2.shadowRoot.querySelectorAll(".legend").length, 0);
+  assert.equal(el2.shadowRoot.querySelectorAll(".cell").length, 7 * 24);
   el2.remove();
 });
 
@@ -493,6 +501,8 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.ok(!names(P.editorSchema({ mode: "graph", compare: "weekday_weekend" }, "measurement", t)).includes("reference"));
   assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "weekday_weekend" }, "state", t)).includes("difference"));
   assert.ok(!names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("difference"));
+  assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_legend"));
+  assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("hide_legend"));
 
   const ed = w.document.createElement("pattern-card-editor");
   const { hass } = makeHass({ "binary_sensor.m": { entity_id: "binary_sensor.m", state: "off", attributes: {} } }, () => []);
