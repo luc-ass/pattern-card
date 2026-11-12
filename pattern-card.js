@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.7.2";
+const CARD_VERSION = "0.7.3";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -68,6 +68,7 @@ const I18N = {
   en: {
     today: "Today",
     ref_reference: "Reference (avg)",
+    history: "History",
     band_iqr: "Range 25–75 %",
     band_wide: "Range 10–90 %",
     band_both: "Ranges 25–75 % and 10–90 %",
@@ -149,6 +150,7 @@ const I18N = {
   de: {
     today: "Heute",
     ref_reference: "Referenz (Ø)",
+    history: "Verlauf",
     band_iqr: "Spanne 25–75 %",
     band_wide: "Spanne 10–90 %",
     band_both: "Spannen 25–75 % und 10–90 %",
@@ -1074,6 +1076,10 @@ const STYLE = `
   :host { display: block; height: 100%; }
   ha-card { display: flex; flex-direction: column; height: 100%; position: relative; overflow: visible; }
   .card-header { display: flex; flex-direction: column; padding-bottom: 0; }
+  /* Titelzeile wie hui-history-graph-card: Titel links, Link zum Verlauf rechts */
+  .card-header .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .card-header .history { display: flex; flex: none; color: var(--primary-text-color); }
+  .card-header ha-icon-next { --ha-icon-button-size: 24px; line-height: 24px; color: var(--primary-text-color); }
   /* display: flex überstimmt sonst das hidden-Attribut */
   [hidden] { display: none !important; }
   .card-header .sub {
@@ -1444,7 +1450,7 @@ class PatternCard extends HTMLElement {
   _renderShell() {
     const root = this.shadowRoot;
     if (!root.querySelector("ha-card")) {
-      root.innerHTML = `<style>${STYLE}</style><ha-card><h1 class="card-header"><span class="title"></span><span class="sub"></span></h1><div class="content has-header"></div><div class="tooltip" hidden></div><div class="probe"></div></ha-card>`;
+      root.innerHTML = `<style>${STYLE}</style><ha-card><h1 class="card-header"><div class="head"><span class="title"></span><a class="history"><ha-icon-next></ha-icon-next></a></div><span class="sub"></span></h1><div class="content has-header"></div><div class="tooltip" hidden></div><div class="probe"></div></ha-card>`;
     }
     this._renderHeader();
     const content = root.querySelector(".content");
@@ -1493,8 +1499,21 @@ class PatternCard extends HTMLElement {
     // ohne Titel und Untertitel entfällt der Kopf ganz
     header.hidden = !title && !!this._config.hide_subtitle;
     root.querySelector(".content").classList.toggle("no-name", !title);
-    if (!title) header.querySelector(".title").hidden = true;
-    else header.querySelector(".title").hidden = false;
+    header.querySelector(".head").hidden = !title;
+    // wie die nativen Graph-Karten: Pfeil zum Verlauf über den ausgewerteten Zeitraum
+    const link = header.querySelector(".history");
+    link.href = this._historyUrl();
+    const label = this._hass?.localize?.("panel.history") || this._t("history");
+    link.setAttribute("aria-label", label);
+    link.title = label;
+  }
+
+  _historyUrl() {
+    const cfg = this._config;
+    const days = Math.max(1, Math.round(Number(cfg.days) || DEFAULT_DAYS));
+    const start = this._ref?.refStart ?? Date.now() - (24 * days + 1) * 60 * MIN_MS;
+    const params = new URLSearchParams({ entity_id: cfg.entity, back: "1", start_date: new Date(start).toISOString() });
+    return `/history?${params}`;
   }
 
   _resolveColor(css) {

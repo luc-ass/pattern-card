@@ -295,6 +295,16 @@ test("Karte heatmap: Bewegungsmelder aus dem Verlauf", async () => {
   const root = el.shadowRoot;
   assert.equal(root.querySelector(".title").textContent, "Bewegung Gäste-WC");
   assert.match(root.querySelector(".sub").textContent, /14 Tage/);
+  // Pfeil zum Verlauf wie bei history-graph: Entity und Beginn des ausgewerteten Zeitraums
+  const link = root.querySelector(".card-header a.history");
+  const url = new URL(link.getAttribute("href"), "http://ha.local");
+  assert.equal(url.pathname, "/history");
+  assert.equal(url.searchParams.get("entity_id"), "binary_sensor.bewegung");
+  assert.equal(url.searchParams.get("back"), "1");
+  const startDays = (Date.now() - Date.parse(url.searchParams.get("start_date"))) / 864e5;
+  assert.ok(startDays > 14 && startDays < 16, `start_date ${startDays} Tage zurück`);
+  assert.equal(link.getAttribute("aria-label"), "Verlauf");
+  assert.ok(link.querySelector("ha-icon-next"));
   el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14, hide_subtitle: true });
   await flush();
   assert.equal(root.querySelector(".sub").hidden, true);
