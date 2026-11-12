@@ -93,7 +93,7 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 
 - Der visuelle Editor nutzt `ha-form` mit nativen Selektoren: `entity`, `select` (Modus, Statistik, Auflösung, Band), `number` (Tage), `select` mit `multiple` (Wochentage) und `color_rgb`/`ui_color` für Farben. Die Felder für `statistic` hängen vom Typ der Entity ab.
 - `getStubConfig` wählt einen Messwert mit Statistik, sonst einen Bewegungsmelder.
-- `getGridOptions`: Graph `columns: 12, min_columns: 6, rows: 4, min_rows: 3`, Heatmap `columns: 12, min_columns: 6, rows: 3, min_rows: 2`. `getCardSize` für Masonry passend dazu.
+- `getGridOptions`: Graph `columns: 12, min_columns: 6, min_rows: 3`, Heatmap `columns: 12, min_columns: 6, min_rows: 2`, ohne feste `rows` wie `statistics-graph`: die Höhe ergibt sich aus dem Inhalt (feste Zeilen ließen in HA den Inhalt überlaufen). `getCardSize` für Masonry passend dazu.
 - `window.customCards`-Eintrag mit Vorschau.
 - Übersetzungen DE/EN in der Karte, gewählt nach `hass.locale.language`. Zahlen und Einheiten formatiert wie in HA (`hass.formatEntityState`/`formatEntityAttributeValue`, sonst `Intl.NumberFormat`).
 

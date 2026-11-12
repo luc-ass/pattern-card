@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.1.1";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -978,9 +978,10 @@ class PatternCard extends HTMLElement {
   }
 
   getGridOptions() {
+    // wie statistics-graph: keine feste Zeilenzahl, die Höhe ergibt sich aus dem Inhalt
     return this._config?.mode === "heatmap"
-      ? { columns: 12, min_columns: 6, rows: 3, min_rows: 2 }
-      : { columns: 12, min_columns: 6, rows: 4, min_rows: 3 };
+      ? { columns: 12, min_columns: 6, min_rows: 2 }
+      : { columns: 12, min_columns: 6, min_rows: 3 };
   }
 
   /* ---- Daten ---- */
