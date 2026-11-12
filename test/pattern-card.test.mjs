@@ -275,12 +275,12 @@ test("Karte graph: Messwert aus der Statistik an ha-chart-base, ohne Zoom", asyn
       throw new Error(`unerwartet: ${msg.type}`);
     }
   );
-  const el = mount({ type: "custom:pattern-card", entity: "sensor.leistung", days: 7 }, hass);
+  const el = mount({ type: "custom:pattern-card", entity: "sensor.leistung", days: 7, reference: "all" }, hass);
   await flush(20);
   const chart = el.shadowRoot.querySelector("ha-chart-base");
   assert.ok(chart, "ha-chart-base eingesetzt");
   const ids = [...chart.data].map((s) => s.id);
-  assert.deepEqual(ids, ["band-low", "band", "reference", "today"]);
+  assert.deepEqual(ids, ["band-low-reference", "band-reference", "ref-reference", "today"]);
   assert.ok(Array.isArray(chart.options.dataZoom) && chart.options.dataZoom.length === 0);
   assert.equal(chart.zoomSlider, "never");
   assert.equal(chart.options.xAxis[0].type, "time");
@@ -289,7 +289,7 @@ test("Karte graph: Messwert aus der Statistik an ha-chart-base, ohne Zoom", asyn
   assert.ok(stat.some((c) => c.period === "5minute"));
   assert.deepEqual({ ...stat[0].units }, { power: "W" });
   // Referenz: 96 Punkte, Mittel je Slot = Stundenwert
-  const ref = chart.data.find((s) => s.id === "reference").data;
+  const ref = chart.data.find((s) => s.id === "ref-reference").data;
   assert.equal(ref.length, 96);
   near(ref[4][1], 510, 1e-9);
   // Tooltip
@@ -317,7 +317,7 @@ test("Karte graph: Fallback auf Stundenstatistik, wenn 5-min nicht weit genug re
   await flush(20);
   const chart = el.shadowRoot.querySelector("ha-chart-base");
   assert.match(el.shadowRoot.querySelector(".sub").textContent, /stündlich/);
-  const ref = chart.data.find((s) => s.id === "reference").data;
+  const ref = chart.data.find((s) => s.id.startsWith("ref-")).data;
   assert.equal(ref.length, 25); // Mitternacht + 24 Stunden
   near(ref[24][1], 24, 1e-9);
   el.remove();
@@ -336,6 +336,108 @@ test("setConfig prüft Eingaben", () => {
   assert.throws(() => el.setConfig({}), /entity/);
   assert.throws(() => el.setConfig({ entity: "sensor.x", mode: "pie" }), /mode/);
   assert.throws(() => el.setConfig({ entity: "sensor.x", resolution: "7min" }), /resolution/);
+  assert.throws(() => el.setConfig({ entity: "sensor.x", compare: "month" }), /compare/);
+  assert.throws(() => el.setConfig({ entity: "sensor.x", reference: "same" }), /reference/);
+});
+
+
+/* ---- Vergleich Werktage/Wochenende ---- */
+
+test("referenceGroups: automatisch wie heute, Vergleich, eigene Wochentage", () => {
+  const keys = (g) => [...g].map((x) => `${x.key}:${[...x.weekdays].join("")}`);
+  assert.deepEqual(keys(P.referenceGroups({}, 3)), ["workday:01234"]);
+  assert.deepEqual(keys(P.referenceGroups({}, 6)), ["weekend:56"]);
+  assert.deepEqual(keys(P.referenceGroups({ reference: "all" }, 6)), ["reference:0123456"]);
+  assert.deepEqual(keys(P.referenceGroups({ weekdays: ["mon", "sun"] }, 3)), ["reference:06"]);
+  assert.deepEqual(keys(P.referenceGroups({ compare: "weekday_weekend" }, 3)), ["workday:01234", "weekend:56"]);
+  assert.deepEqual(keys(P.referenceGroups({ compare: "weekday_weekend", weekdays: ["mon", "tue"] }, 3)), ["workday:01"]);
+  assert.deepEqual(keys(P.heatmapRows({ compare: "weekday_weekend" })), ["workday:01234", "weekend:56"]);
+  assert.equal(P.heatmapRows({}).length, 7);
+});
+
+const filledDays = (now, nDays, valueOf) => {
+  const days = P.buildDays(now, nDays, TZ, 60);
+  for (const d of days) {
+    for (let k = 0; k < 24; k++) {
+      if (d.b[k] >= now) break;
+      P.accumulateStats([d], [{ start: d.b[k], end: d.b[k + 1], mean: valueOf(d, k) }], "mean", "hour");
+    }
+  }
+  return days;
+};
+
+test("computeModel: zwei Referenzen und Differenzzeile", () => {
+  const now = P.wallToTs(2026, 11, 12, 12, 0, TZ); // Do
+  const val = (d, k) => (d.weekday >= 5 ? 300 : 100) + k;
+  const days = filledDays(now, 14, val);
+  const cfg = { compare: "weekday_weekend" };
+  const g = P.computeModel(days, { statistic: "mean", now, mode: "graph", groups: P.referenceGroups(cfg, 3) });
+  assert.equal(g.references.length, 2);
+  assert.equal(g.references[0].stats[5].mean, 105);
+  assert.equal(g.references[1].stats[5].mean, 305);
+  assert.equal(g.references[0].expectedDays, 10);
+  assert.equal(g.references[1].expectedDays, 4);
+  const h = P.computeModel(days, { statistic: "mean", now, mode: "heatmap", rows: P.heatmapRows(cfg), difference: true });
+  assert.equal(h.rows.length, 2);
+  assert.equal(h.diff[5].value, 200);
+  assert.equal(h.diff[5].n, 4);
+});
+
+test("Karte graph: Vergleich mit zwei Referenzen und eigenen Farben", async () => {
+  const now = Date.now();
+  const { hass } = makeHass(
+    { "sensor.leistung": { entity_id: "sensor.leistung", state: "640", attributes: { unit_of_measurement: "W", state_class: "measurement" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [{ statistic_id: "sensor.leistung", has_sum: false, mean_type: 1 }];
+      const step = msg.period === "hour" ? H : 5 * M;
+      const out = [];
+      for (let t = Math.ceil(Date.parse(msg.start_time) / step) * step; t + step <= Math.min(Date.parse(msg.end_time), now); t += step) out.push({ start: t, end: t + step, mean: 400 });
+      return { "sensor.leistung": out };
+    }
+  );
+  const el = mount({ type: "custom:pattern-card", entity: "sensor.leistung", days: 14, compare: "weekday_weekend" }, hass);
+  await flush(20);
+  const chart = el.shadowRoot.querySelector("ha-chart-base");
+  const ids = [...chart.data].map((s) => s.id);
+  assert.deepEqual(ids, ["band-low-workday", "band-workday", "ref-workday", "band-low-weekend", "band-weekend", "ref-weekend", "today"]);
+  const legend = [...chart.options.legend.data].map((x) => x.name);
+  assert.deepEqual(legend, ["Heute", "Werktage (Ø)", "Spanne Werktage", "Wochenende (Ø)", "Spanne Wochenende"]);
+  const ref = chart.data.find((s) => s.id === "ref-workday").data;
+  const tip = chart.options.tooltip.formatter([{ value: ref[40] }]).textContent;
+  assert.match(tip, /Werktage \(Ø\): 400 W \(\d+ Tage\)/);
+  assert.match(tip, /Wochenende \(Ø\): 400 W/);
+  el.remove();
+});
+
+test("Karte heatmap: Gruppenzeilen und Differenzzeile", async () => {
+  const now = Date.now();
+  const entries = [];
+  for (let t = now - 21 * 24 * H; t < now; t += 3 * H) entries.push({ s: "on", lu: t / 1000 }, { s: "off", lu: (t + 20 * M) / 1000 });
+  const { hass } = makeHass(
+    { "binary_sensor.b": { entity_id: "binary_sensor.b", state: "off", attributes: { device_class: "motion" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [];
+      const s = Date.parse(msg.start_time) / 1000;
+      const e = Date.parse(msg.end_time) / 1000;
+      return { "binary_sensor.b": entries.filter((x) => x.lu >= s && x.lu < e) };
+    }
+  );
+  const el = mount({ type: "custom:pattern-card", entity: "binary_sensor.b", mode: "heatmap", days: 14, compare: "weekday_weekend" }, hass);
+  await flush();
+  const root = el.shadowRoot;
+  assert.deepEqual([...root.querySelectorAll(".wd")].map((x) => x.textContent), ["Mo–Fr", "Sa–So", "Δ"]);
+  assert.equal(root.querySelectorAll(".cell").length, 3 * 24);
+  assert.equal(root.querySelectorAll(".legend").length, 2);
+  const d = [...root.querySelectorAll(".cell.diff")].find((c) => c.getAttribute("style"));
+  if (d) {
+    d.dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+    assert.match(root.querySelector(".tooltip").textContent, /Wochenende − Werktage: [+−-]?\d/);
+  }
+  el.remove();
+  const el2 = mount({ type: "custom:pattern-card", entity: "binary_sensor.b", mode: "heatmap", days: 14, compare: "weekday_weekend", difference: false }, hass);
+  await flush();
+  assert.equal(el2.shadowRoot.querySelectorAll(".wd").length, 2);
+  el2.remove();
 });
 
 /* ---- Editor ---- */
@@ -347,6 +449,10 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.ok(!names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("statistic"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("statistic"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("max"));
+  assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("reference"));
+  assert.ok(!names(P.editorSchema({ mode: "graph", compare: "weekday_weekend" }, "measurement", t)).includes("reference"));
+  assert.ok(names(P.editorSchema({ mode: "heatmap", compare: "weekday_weekend" }, "state", t)).includes("difference"));
+  assert.ok(!names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("difference"));
 
   const ed = w.document.createElement("pattern-card-editor");
   const { hass } = makeHass({ "binary_sensor.m": { entity_id: "binary_sensor.m", state: "off", attributes: {} } }, () => []);
@@ -360,6 +466,8 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.deepEqual([...out.weekdays], ["mon", "sun"]);
   assert.equal(out.statistic, "events");
   assert.equal(out.resolution, undefined);
+  assert.equal(out.compare, undefined);
+  assert.equal(out.difference, undefined);
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, statistic: "active" } } }));
   assert.equal(out.weekdays, undefined);
   assert.equal(out.statistic, undefined);

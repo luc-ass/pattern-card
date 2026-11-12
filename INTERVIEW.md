@@ -43,3 +43,7 @@ Leitlinie: so nativ wie möglich in Funktion und Aussehen (HA-Frontend als Refer
 - Heatmap-Werte je Typ: Zustand → Anteil aktiv (Standard), Ereignisse. Messwert (`measurement`) → Mittelwert. Zähler (`total`/`total_increasing`) → Summe/Verbrauch (Standard), Mittelwert
 - Wochentagsfilter gilt für Graph-Referenz und Heatmap-Zeilen
 - Tooltip: Wochentag/Uhrzeit, Wert mit Einheit, Zahl der Tage, die eingeflossen sind
+
+### Nachtrag 2026-11-12: Vergleich Werktage/Wochenende (0.2.0)
+- Gewünscht: Ideen 1–4. Graph mit zwei Referenzen (Werktage, Wochenende), Referenz standardmäßig wie heute (Werktag oder Wochenende), Heatmap mit zwei Zeilen und Differenzzeile
+- Feiertage (Workday-Integration) und eigene Gruppen erst später

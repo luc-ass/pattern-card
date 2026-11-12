@@ -10,7 +10,7 @@
     --primary-color: #03a9f4; --primary-text-color: #212121; --secondary-text-color: #727272;
     --card-background-color: #fff; --primary-background-color: #fafafa; --secondary-background-color: #e5e5e5;
     --divider-color: rgba(0,0,0,.12); --info-color: #039be5; --disabled-text-color: #bdbdbd;
-    --graph-color-1: #4269d0; --state-active-color: #ff9800; --state-binary_sensor-active-color: #ff9800;
+    --graph-color-1: #4269d0; --graph-color-2: #efb118; --graph-color-3: #ff725c; --state-active-color: #ff9800; --state-binary_sensor-active-color: #ff9800;
     --state-light-active-color: #ffc107; --amber-color: #ffc107; --red-color: #f44336; --green-color: #4caf50;
     --blue-color: #2196f3; --purple-color: #926bc7; --teal-color: #009688;
     --ha-font-size-xs: 10px; --ha-font-size-s: 12px; --ha-font-size-m: 14px; --ha-font-size-2xl: 24px;
@@ -167,6 +167,8 @@ const configs = [
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28 },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, statistic: "events", colors: ["#e3f2fd", "#0d47a1"] },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "graph", days: 28 },
+  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: "Werktage gegen Wochenende" },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: "Belegung Werktage/Wochenende" },
 ];
 
 const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");

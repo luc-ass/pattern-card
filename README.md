@@ -33,6 +33,12 @@ mode: graph
 cumulative: true
 weekdays: [mon, tue, wed, thu, fri]
 
+# Power: workdays vs. weekend in one graph
+type: custom:pattern-card
+entity: sensor.grid_power
+mode: graph
+compare: weekday_weekend
+
 # Room occupancy: weekday × hour
 type: custom:pattern-card
 entity: binary_sensor.motion_guest_toilet
@@ -51,6 +57,9 @@ days: 56
 | `weekdays` | all | Only these weekdays (`mon` … `sun`) |
 | `statistic` | by type | `active`, `events` (states), `mean` (measurements), `sum` (counters) |
 | `resolution` | `auto` | `auto`, `5min`, `15min`, `30min`, `hour`. Auto: graph 15 min where data allows, heatmap 1 h |
+| `compare` | `none` | `weekday_weekend`: graph shows workdays and weekend as two references; heatmap shows two rows (Mon–Fri, Sat–Sun) plus a difference row |
+| `reference` | `auto` | Graph without `compare`: `auto` compares today with days of the same kind (workdays or weekend), `all` with every day. Ignored when `weekdays` is set |
+| `difference` | `true` | Heatmap with `compare`: show the difference row (weekend − workdays) |
 | `band` | `iqr` | Graph only: `iqr` (25–75 %), `minmax`, `none` |
 | `cumulative` | `false` | Graph, counters only: consumption since midnight |
 | `color` | state color | Today's line / heatmap color (hex, CSS or theme color name) |

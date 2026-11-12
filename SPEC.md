@@ -21,6 +21,9 @@ weekdays: [mon, tue, wed, thu, fri, sat, sun]   # Standard: alle
 statistic: mean             # active | events | mean | sum, Standard nach Typ (s. u.)
 resolution: auto            # auto | 5min | 15min | 30min | hour
 # nur graph
+compare: none               # none | weekday_weekend (ab 0.2.0)
+reference: auto             # nur graph ohne compare: auto (Tage derselben Art wie heute) | all
+difference: true            # nur heatmap mit compare: Differenzzeile Wochenende − Werktage
 band: iqr                   # iqr (25–75 %) | minmax | none
 cumulative: false           # nur Zähler: kumuliert ab Mitternacht
 # nur heatmap
@@ -112,6 +115,15 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 - **Repo `luc-ass/pattern-card`**, HACS (`hacs.json`, `content_in_root`). README auf Englisch, die Projekt-Doku auf Deutsch.
 - **Installation an deiner Instanz** erst nach OK (Datei unter `/config/www/`, Ressource, Testdashboard), mit Eintrag im `CHANGELOG.md` von ha-organisation.
 - **Testdaten**: Strom `sensor.flur_kg_stromzahler_netz_leistung` (Messwert), `sensor.flur_kg_stromzahler_netz_import` (Zähler), Gäste-WC `binary_sensor.bewegung_eg_gaste_wc` und `light.licht_eg_gaste_wc` (Zustände, Verlauf erst ab 09.11.2026).
+
+## Vergleich Werktage/Wochenende (0.2.0)
+
+Entschieden mit Lucas am 2026-11-12 (Ideen 1–4). Feiertage über die Integration *Workday* sind vorgemerkt, aber nicht Teil von 0.2.0.
+
+- **Referenz im Graph (`reference`)**: Standard `auto` nimmt die Tage derselben Art wie heute (an einem Donnerstag Mo–Fr, an einem Samstag Sa–So). Mit `all` gelten alle Tage. Wer eigene `weekdays` setzt, bekommt genau diese, `reference` wirkt dann nicht. Legende und Tooltip nennen die Gruppe („Werktage (Ø)“). Achtung: Das ändert den Standard gegenüber 0.1.x, wo alle Tage galten
+- **`compare: weekday_weekend` im Graph**: zwei Referenzen, Werktage in `--graph-color-2` und Wochenende in `--graph-color-3`, je gestrichelte Mittelwert-Linie und dezentes Band (Deckkraft 0,12). Heute bleibt `--graph-color-1` bzw. die Zustandsfarbe. Jede Linie und jedes Band ist über die Legende abschaltbar. Der Tooltip zeigt je Gruppe Mittel, Spanne und Zahl der Tage. Eine einzelne Referenz bleibt neutral grau (`--secondary-text-color`)
+- **`compare: weekday_weekend` in der Heatmap**: zwei Zeilen „Mo–Fr“ und „Sa–So“ (aus den gewählten Wochentagen) statt sieben. Darunter mit etwas Abstand die Differenzzeile „Δ“ = Wochenende − Werktage, zweifarbig um 0: Werktage-Farbe für „mehr an Werktagen“, Wochenende-Farbe für „mehr am Wochenende“, Skala symmetrisch bis zum größten Betrag. Eine zweite Legende zeigt die Spanne. Der Tooltip der Differenzzeile nennt beide Werte und die Differenz. `difference: false` blendet die Zeile aus
+- Die Gruppen sind intern allgemein gehalten (`referenceGroups`, `heatmapRows`), damit später eigene Gruppen oder Feiertage dazukommen können
 
 ## Entscheidungen nach dem Entwurf (2026-11-12)
 

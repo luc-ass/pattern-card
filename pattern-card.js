@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.1.1";
+const CARD_VERSION = "0.2.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -65,7 +65,7 @@ const STATISTICS_BY_KIND = {
 const I18N = {
   en: {
     today: "Today",
-    reference: "Reference (avg)",
+    ref_reference: "Reference (avg)",
     band_iqr: "Range 25–75 %",
     band_minmax: "Range min–max",
     band_none: "No band",
@@ -84,6 +84,15 @@ const I18N = {
     stat_mean: "Mean",
     stat_sum: "Consumption",
     stat_sum_cumulative: "Consumption since midnight",
+    ref_workday: "Workdays (avg)",
+    ref_weekend: "Weekend (avg)",
+    group_workday: "Workdays",
+    group_weekend: "Weekend",
+    band_group: "Range {group}",
+    days_short: "{n} days",
+    diff_label: "Weekend − workdays",
+    more_workday: "more on workdays",
+    more_weekend: "more at weekends",
     // Editor
     entity: "Entity",
     mode: "Display",
@@ -106,10 +115,18 @@ const I18N = {
     max: "Scale maximum",
     helper_days: "Completed days before today",
     helper_resolution: "Automatic: graph 15 min where data allows, heatmap 1 h",
+    compare: "Comparison",
+    compare_none: "None",
+    compare_weekday_weekend: "Workdays vs. weekend",
+    reference: "Reference days",
+    reference_auto: "Same kind of day as today",
+    reference_all: "All days",
+    helper_reference: "Only applies without your own selection of weekdays",
+    difference: "Difference row (weekend − workdays)",
   },
   de: {
     today: "Heute",
-    reference: "Referenz (Ø)",
+    ref_reference: "Referenz (Ø)",
     band_iqr: "Spanne 25–75 %",
     band_minmax: "Spanne Min–Max",
     band_none: "Kein Band",
@@ -128,6 +145,15 @@ const I18N = {
     stat_mean: "Mittelwert",
     stat_sum: "Verbrauch",
     stat_sum_cumulative: "Verbrauch seit Mitternacht",
+    ref_workday: "Werktage (Ø)",
+    ref_weekend: "Wochenende (Ø)",
+    group_workday: "Werktage",
+    group_weekend: "Wochenende",
+    band_group: "Spanne {group}",
+    days_short: "{n} Tage",
+    diff_label: "Wochenende − Werktage",
+    more_workday: "mehr an Werktagen",
+    more_weekend: "mehr am Wochenende",
     entity: "Entity",
     mode: "Darstellung",
     mode_graph: "Verlauf (heute gegen Referenz)",
@@ -149,6 +175,14 @@ const I18N = {
     max: "Skala Maximum",
     helper_days: "Abgeschlossene Tage vor heute",
     helper_resolution: "Automatisch: Verlauf 15 min, wo die Daten es hergeben, Heatmap 1 h",
+    compare: "Vergleich",
+    compare_none: "Kein Vergleich",
+    compare_weekday_weekend: "Werktage gegen Wochenende",
+    reference: "Referenztage",
+    reference_auto: "Tage derselben Art wie heute",
+    reference_all: "Alle Tage",
+    helper_reference: "Gilt nur ohne eigene Auswahl der Wochentage",
+    difference: "Differenzzeile (Wochenende − Werktage)",
   },
 };
 
@@ -237,6 +271,44 @@ const timeZoneOf = (hass) => {
 const selectedWeekdays = (cfg) => {
   const list = Array.isArray(cfg.weekdays) && cfg.weekdays.length ? cfg.weekdays : WEEKDAYS;
   return new Set(list.map((w) => WEEKDAYS.indexOf(String(w).toLowerCase())).filter((i) => i >= 0));
+};
+
+const WORKDAYS = [0, 1, 2, 3, 4];
+const WEEKEND = [5, 6];
+const COMPARE_MODES = ["none", "weekday_weekend"];
+const REFERENCE_MODES = ["auto", "all"];
+
+/**
+ * Referenzgruppen für den Graph:
+ * - compare: weekday_weekend → Werktage und Wochenende (je mit gewählten Wochentagen)
+ * - reference: auto ohne eigene Wochentage → Tage derselben Art wie heute
+ * - sonst eine Referenz aus den gewählten Wochentagen
+ */
+const referenceGroups = (cfg, todayWeekday) => {
+  const sel = selectedWeekdays(cfg);
+  const pick = (list) => new Set(list.filter((d) => sel.has(d)));
+  if (cfg.compare === "weekday_weekend") {
+    return [{ key: "workday", weekdays: pick(WORKDAYS) }, { key: "weekend", weekdays: pick(WEEKEND) }]
+      .filter((g) => g.weekdays.size);
+  }
+  const explicit = Array.isArray(cfg.weekdays) && cfg.weekdays.length > 0;
+  if ((cfg.reference || "auto") === "auto" && !explicit) {
+    const key = WEEKEND.includes(todayWeekday) ? "weekend" : "workday";
+    return [{ key, weekdays: new Set(key === "weekend" ? WEEKEND : WORKDAYS), auto: true }];
+  }
+  return [{ key: "reference", weekdays: sel }];
+};
+
+/** Zeilen der Heatmap: je gewähltem Wochentag, im Vergleich Werktage und Wochenende */
+const heatmapRows = (cfg) => {
+  const sel = selectedWeekdays(cfg);
+  if (cfg.compare === "weekday_weekend") {
+    return [
+      { key: "workday", weekdays: new Set(WORKDAYS.filter((d) => sel.has(d))) },
+      { key: "weekend", weekdays: new Set(WEEKEND.filter((d) => sel.has(d))) },
+    ].filter((r) => r.weekdays.size);
+  }
+  return [...sel].sort((a, b) => a - b).map((d) => ({ key: WEEKDAYS[d], weekdays: new Set([d]) }));
 };
 
 /* --------------------------------------------------------------------------
@@ -492,23 +564,27 @@ const slotStats = (arrays, S) => {
 
 /**
  * Modell für Graph und Heatmap aus den befüllten Tagen.
- * Referenz = alle Tage außer heute mit gewähltem Wochentag.
+ * Graph: je Referenzgruppe Kennzahlen je Slot (ohne heute), dazu heute.
+ * Heatmap: je Zeile (Wochentag oder Gruppe) Mittel je Slot, optional Differenz zweier Zeilen.
+ * Ohne groups/rows wird aus weekdays eine Referenz bzw. eine Zeile je Wochentag.
  */
 const computeModel = (days, opts) => {
-  const { statistic, now, weekdays, cumulative, mode } = opts;
+  const { statistic, now, cumulative, mode } = opts;
   const today = days[days.length - 1];
   const S = today.b.length - 1;
-  const refDays = days.filter((d) => !d.isToday && weekdays.has(d.weekday));
-  const model = { S, statistic, today, refDays: refDays.length };
+  const weekdays = opts.weekdays || new Set([0, 1, 2, 3, 4, 5, 6]);
+  const model = { S, statistic, today };
 
   if (mode === "heatmap") {
-    const rows = [];
+    const specs = opts.rows || [...weekdays].sort((a, b) => a - b).map((d) => ({ key: WEEKDAYS[d], weekdays: new Set([d]) }));
     let lo = Infinity;
     let hi = -Infinity;
     let daysWithData = 0;
-    for (let wd = 0; wd < 7; wd++) {
-      if (!weekdays.has(wd)) continue;
-      const vals = days.filter((d) => d.weekday === wd).map((d) => dayValues(d, statistic, now, true));
+    let expectedDays = 0;
+    model.rows = specs.map((spec) => {
+      const ds = days.filter((d) => spec.weekdays.has(d.weekday));
+      const vals = ds.map((d) => dayValues(d, statistic, now, true));
+      expectedDays += ds.length;
       daysWithData += vals.filter((a) => a.some((v) => v != null)).length;
       const cells = slotStats(vals, S).map((c) => ({ n: c.n, value: c.mean }));
       for (const c of cells) {
@@ -516,26 +592,43 @@ const computeModel = (days, opts) => {
         lo = Math.min(lo, c.value);
         hi = Math.max(hi, c.value);
       }
-      rows.push({ weekday: wd, cells });
+      // weekday: Kompatibilität für Zeilen aus genau einem Wochentag
+      return { ...spec, weekday: spec.weekdays.size === 1 ? [...spec.weekdays][0] : undefined, cells };
+    });
+    if (opts.difference && model.rows.length === 2) {
+      const [a, b] = model.rows;
+      model.diff = a.cells.map((ca, k) => {
+        const cb = b.cells[k];
+        return ca.value == null || cb.value == null ? { value: null, n: 0 } : { value: cb.value - ca.value, n: Math.min(ca.n, cb.n) };
+      });
     }
-    model.rows = rows;
     model.dataMin = Number.isFinite(lo) ? lo : null;
     model.dataMax = Number.isFinite(hi) ? hi : null;
     model.daysWithData = daysWithData;
-    model.expectedDays = days.filter((d) => weekdays.has(d.weekday)).length;
+    model.expectedDays = expectedDays;
     return model;
   }
 
-  let refVals = refDays.map((d) => dayValues(d, statistic, now, false));
-  let todayVals = dayValues(today, statistic, now, false);
-  if (cumulative) {
-    refVals = refVals.map((a, i) => cumulate(a, refDays[i], now));
-    todayVals = cumulate(todayVals, today, now);
-  }
-  model.reference = slotStats(refVals, S);
-  model.todayVals = todayVals;
-  model.daysWithData = refVals.filter((a) => a.some((v) => v != null)).length;
-  model.expectedDays = refDays.length;
+  const prep = (d) => {
+    const v = dayValues(d, statistic, now, false);
+    return cumulative ? cumulate(v, d, now) : v;
+  };
+  const groups = opts.groups || [{ key: "reference", weekdays }];
+  model.references = groups.map((g) => {
+    const ds = days.filter((d) => !d.isToday && g.weekdays.has(d.weekday));
+    const vals = ds.map(prep);
+    return {
+      ...g,
+      stats: slotStats(vals, S),
+      daysWithData: vals.filter((a) => a.some((v) => v != null)).length,
+      expectedDays: ds.length,
+    };
+  });
+  model.todayVals = prep(today);
+  model.daysWithData = model.references.reduce((s, r) => s + r.daysWithData, 0);
+  model.expectedDays = model.references.reduce((s, r) => s + r.expectedDays, 0);
+  model.reference = model.references[0]?.stats || [];
+  model.refDays = model.expectedDays;
   return model;
 };
 
@@ -663,53 +756,59 @@ const withUnit = (text, unit) => {
 
 /**
  * Baut data/options für ha-chart-base.
- * ctx: { colors: {today, reference}, label, fmtNumber, fmtTime, unit, band, cumulative }
+ * ctx: { colors: {today, refs: {key: color}}, label: {today, refs: {key}, bandName(ref, mode), daysN},
+ *        fmtNumber, fmtTime, unit, band, cumulative }
  */
 const buildGraph = (model, ctx) => {
-  const { today, reference, todayVals, S, statistic } = model;
+  const { today, references, todayVals, S, statistic } = model;
   const b = today.b;
   const cumulative = !!ctx.cumulative;
+  const multi = references.length > 1;
   const xOf = (k) => (cumulative ? b[k + 1] : b[k] + (b[k + 1] - b[k]) / 2);
   const slotOfX = new Map();
   for (let k = 0; k < S; k++) slotOfX.set(xOf(k), k);
   if (cumulative) slotOfX.set(b[0], -1);
-
-  const bandMode = ctx.band === "none" ? "none" : model.daysWithData < MIN_DAYS_IQR || ctx.band === "minmax" ? "minmax" : "iqr";
-  const lowKey = bandMode === "iqr" ? "p25" : "min";
-  const highKey = bandMode === "iqr" ? "p75" : "max";
-
   const start = cumulative ? [[b[0], 0]] : [];
-  const pts = (fn) => start.concat(reference.map((r, k) => [xOf(k), fn(r, k)]));
-  const lowData = pts((r) => r[lowKey]);
-  const spanData = pts((r) => (r[lowKey] == null ? null : r[highKey] - r[lowKey]));
-  const meanData = pts((r) => r.mean);
-  const todayData = start.concat(todayVals.map((v, k) => [xOf(k), v]));
-  // heute nur bis zum letzten Wert zeichnen
-  let last = todayData.length - 1;
-  while (last >= 0 && todayData[last][1] == null) last--;
-  const todayShown = todayData.slice(0, last + 1);
 
   const isState = statistic === "active";
   const isEvents = statistic === "events";
   const series = [];
-  if (bandMode !== "none") {
+  const legendData = [{ id: "today", name: ctx.label.today }];
+
+  const refs = references.map((ref) => {
+    const bandMode = ctx.band === "none" ? "none" : ref.daysWithData < MIN_DAYS_IQR || ctx.band === "minmax" ? "minmax" : "iqr";
+    const lowKey = bandMode === "iqr" ? "p25" : "min";
+    const highKey = bandMode === "iqr" ? "p75" : "max";
+    const color = ctx.colors.refs[ref.key];
+    const name = ctx.label.refs[ref.key];
+    const bandName = ctx.label.bandName(ref, bandMode, multi);
+    const pts = (fn) => start.concat(ref.stats.map((r, k) => [xOf(k), fn(r, k)]));
+    if (bandMode !== "none") {
+      series.push({
+        id: `band-low-${ref.key}`, name: "", type: "line", data: pts((r) => r[lowKey]),
+        stack: `band-${ref.key}`, stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
+        lineStyle: { width: 0 }, silent: true, z: 1, color,
+      });
+      series.push({
+        id: `band-${ref.key}`, name: bandName, type: "line",
+        data: pts((r) => (r[lowKey] == null ? null : r[highKey] - r[lowKey])),
+        stack: `band-${ref.key}`, stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
+        lineStyle: { width: 0 }, areaStyle: { color, opacity: multi ? 0.12 : 0.18 }, silent: true, z: 1, color,
+      });
+    }
     series.push({
-      id: "band-low", name: ctx.label.band_low || "", type: "line", data: lowData,
-      stack: "band", stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
-      lineStyle: { width: 0 }, silent: true, z: 1, connectNulls: false,
-      color: ctx.colors.reference,
+      id: `ref-${ref.key}`, name, type: "line", data: pts((r) => r.mean), symbol: "none",
+      lineStyle: { width: 1.5, type: "dashed", color }, color, z: 2,
     });
-    series.push({
-      id: "band", name: bandMode === "iqr" ? ctx.label.band_iqr : ctx.label.band_minmax, type: "line", data: spanData,
-      stack: "band", stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
-      lineStyle: { width: 0 }, areaStyle: { color: ctx.colors.reference, opacity: 0.18 }, silent: true, z: 1,
-      color: ctx.colors.reference,
-    });
-  }
-  series.push({
-    id: "reference", name: ctx.label.reference, type: "line", data: meanData, symbol: "none",
-    lineStyle: { width: 1.5, type: "dashed", color: ctx.colors.reference }, color: ctx.colors.reference, z: 2,
+    legendData.push({ id: `ref-${ref.key}`, name });
+    if (bandMode !== "none") legendData.push({ id: `band-${ref.key}`, name: bandName });
+    return { ref, bandMode, lowKey, highKey, color, name, bandName };
   });
+
+  const todayData = start.concat(todayVals.map((v, k) => [xOf(k), v]));
+  let last = todayData.length - 1;
+  while (last >= 0 && todayData[last][1] == null) last--;
+  const todayShown = todayData.slice(0, last + 1);
   if (isEvents) {
     series.push({
       id: "today", name: ctx.label.today, type: "bar", data: todayShown, barWidth: "60%",
@@ -724,9 +823,6 @@ const buildGraph = (model, ctx) => {
     });
   }
 
-  const legendData = [{ id: "today", name: ctx.label.today }, { id: "reference", name: ctx.label.reference }];
-  if (bandMode !== "none") legendData.push({ id: "band", name: series[1].name });
-
   const tooltipFormatter = (params) => {
     const list = Array.isArray(params) ? params : [params];
     const p = list.find((x) => x && Array.isArray(x.value));
@@ -734,23 +830,27 @@ const buildGraph = (model, ctx) => {
     const k = slotOfX.get(p.value[0]);
     if (k === undefined) return null;
     const el = document.createElement("div");
-    let rows;
     if (k === -1) {
-      rows = `${escapeHtml(ctx.fmtTime(b[0]))}`;
-    } else {
-      const r = reference[k];
-      const tv = todayVals[k];
-      const v = (x) => escapeHtml(withUnit(ctx.fmtNumber(x), ctx.unit));
-      const time = cumulative
-        ? escapeHtml(ctx.fmtTime(b[k + 1]))
-        : `${escapeHtml(ctx.fmtTime(b[k]))} – ${escapeHtml(ctx.fmtTime(b[k + 1]))}`;
-      rows = `${time}`;
-      if (tv != null) rows += `<br><ha-chart-tooltip-marker color="${escapeHtml(ctx.colors.today)}"></ha-chart-tooltip-marker>${escapeHtml(ctx.label.today)}: <span dir="ltr">${v(tv)}</span>`;
-      rows += `<br><ha-chart-tooltip-marker color="${escapeHtml(ctx.colors.reference)}"></ha-chart-tooltip-marker>${escapeHtml(ctx.label.reference)}: <span dir="ltr">${v(r.mean)}</span>`;
-      if (bandMode !== "none" && r[lowKey] != null) {
-        rows += `<br><span class="pc-indent"></span>${escapeHtml(series[1].name)}: <span dir="ltr">${escapeHtml(ctx.fmtNumber(r[lowKey]))} – ${v(r[highKey])}</span>`;
+      el.textContent = ctx.fmtTime(b[0]);
+      return el;
+    }
+    const v = (x) => escapeHtml(withUnit(ctx.fmtNumber(x), ctx.unit));
+    const marker = (c) => `<ha-chart-tooltip-marker color="${escapeHtml(c)}"></ha-chart-tooltip-marker>`;
+    let rows = cumulative
+      ? escapeHtml(ctx.fmtTime(b[k + 1]))
+      : `${escapeHtml(ctx.fmtTime(b[k]))} – ${escapeHtml(ctx.fmtTime(b[k + 1]))}`;
+    const tv = todayVals[k];
+    if (tv != null) rows += `<br>${marker(ctx.colors.today)}${escapeHtml(ctx.label.today)}: <span dir="ltr">${v(tv)}</span>`;
+    for (const r of refs) {
+      const st = r.ref.stats[k];
+      const days = multi ? ` <span style="color:var(--secondary-text-color)">(${escapeHtml(ctx.label.daysShort(st.n))})</span>` : "";
+      rows += `<br>${marker(r.color)}${escapeHtml(r.name)}: <span dir="ltr">${v(st.mean)}</span>${days}`;
+      if (r.bandMode !== "none" && st[r.lowKey] != null) {
+        rows += `<br><span class="pc-indent"></span>${escapeHtml(r.bandName)}: <span dir="ltr">${escapeHtml(ctx.fmtNumber(st[r.lowKey]))} – ${v(st[r.highKey])}</span>`;
       }
-      rows += `<br><span style="color:var(--secondary-text-color)">${escapeHtml(ctx.label.daysN(r.n))}</span>`;
+    }
+    if (!multi && refs[0]) {
+      rows += `<br><span style="color:var(--secondary-text-color)">${escapeHtml(ctx.label.daysN(refs[0].ref.stats[k].n))}</span>`;
     }
     el.innerHTML = rows;
     return el;
@@ -764,7 +864,7 @@ const buildGraph = (model, ctx) => {
     position: "left",
     scale: !isState && !isEvents && !cumulative && statistic !== "sum",
     splitLine: { show: true },
-    axisLabel: { formatter: (v) => ctx.fmtNumber(v) },
+    axisLabel: { formatter: (val) => ctx.fmtNumber(val) },
     ...(isState ? { min: 0, max: 100 } : {}),
   };
 
@@ -778,7 +878,7 @@ const buildGraph = (model, ctx) => {
     dataZoom: [],
   };
 
-  return { data: series, options, bandMode, slotOfX };
+  return { data: series, options, refs, slotOfX };
 };
 
 /* --------------------------------------------------------------------------
@@ -852,6 +952,8 @@ const STYLE = `
   }
   .has-rows .cell { height: 100%; min-height: 4px; }
   .cell.hover { outline: 2px solid var(--primary-text-color); outline-offset: -1px; }
+  .cell.diff, .wd.diff { margin-top: 6px; }
+  .legend + .legend { margin-top: 4px; }
   .hour {
     font-size: var(--ha-font-size-xs, 10px); color: var(--secondary-text-color);
     padding-top: 2px; white-space: nowrap; overflow: hidden;
@@ -920,6 +1022,8 @@ class PatternCard extends HTMLElement {
       throw new Error("resolution must be auto, 5min, 15min, 30min or hour");
     }
     if (config.days !== undefined && !(Number(config.days) >= 1)) throw new Error("days must be at least 1");
+    if (config.compare !== undefined && !COMPARE_MODES.includes(config.compare)) throw new Error("compare must be none or weekday_weekend");
+    if (config.reference !== undefined && !REFERENCE_MODES.includes(config.reference)) throw new Error("reference must be auto or all");
     const prev = this._config;
     this._config = { mode: "graph", ...config };
     const changed = !prev || JSON.stringify(prev) !== JSON.stringify(this._config);
@@ -1143,8 +1247,11 @@ class PatternCard extends HTMLElement {
         accumulateHistory(dayList, this._today.entries, todayStart, now, info.domain, mode);
       }
       this._model = computeModel(dayList, {
-        statistic, now, weekdays: selectedWeekdays(cfg), mode: cfg.mode,
+        statistic, now, mode: cfg.mode,
         cumulative: cfg.mode === "graph" && statistic === "sum" && !!cfg.cumulative,
+        groups: referenceGroups(cfg, dayList[dayList.length - 1].weekday),
+        rows: heatmapRows(cfg),
+        difference: cfg.compare === "weekday_weekend" && cfg.difference !== false,
       });
       this._model.coarse = refData.coarse;
       this._model.tz = tz;
@@ -1226,9 +1333,18 @@ class PatternCard extends HTMLElement {
     const st = this._hass?.states?.[cfg.entity];
     const kind = this._info?.kind || "state";
     const user = cssColor(cfg.color);
+    const neutral = this._resolveColor("var(--secondary-text-color)");
+    const workday = this._resolveColor("var(--graph-color-2, var(--color-2, #efb118))");
+    const weekend = this._resolveColor("var(--graph-color-3, var(--color-3, #ff725c))");
     return {
       today: this._resolveColor(user || defaultColor(st, kind, true)),
-      reference: this._resolveColor("var(--secondary-text-color)"),
+      reference: neutral,
+      // eine Referenz neutral grau, im Vergleich die nächsten Graph-Farben von HA
+      refs: this._model?.references?.length > 1
+        ? { workday, weekend, reference: neutral }
+        : { workday: neutral, weekend: neutral, reference: neutral },
+      workday,
+      weekend,
       heat: user || defaultColor(st, kind, false),
     };
   }
@@ -1247,7 +1363,7 @@ class PatternCard extends HTMLElement {
     if (!m) return;
     const hasData = this._config.mode === "heatmap"
       ? m.rows.some((r) => r.cells.some((c) => c.value != null))
-      : m.reference.some((r) => r.mean != null) || m.todayVals.some((v) => v != null);
+      : m.references.some((r) => r.stats.some((x) => x.mean != null)) || m.todayVals.some((v) => v != null);
     if (!hasData) {
       this._chart = null;
       content.innerHTML = `<div class="message">${escapeHtml(this._t("no_data"))}</div>`;
@@ -1280,10 +1396,12 @@ class PatternCard extends HTMLElement {
       fmtTime: timeFormatter(this._hass, m.tz),
       label: {
         today: this._t("today"),
-        reference: this._t("reference"),
-        band_iqr: this._t("band_iqr"),
-        band_minmax: this._t("band_minmax"),
+        refs: { reference: this._t("ref_reference"), workday: this._t("ref_workday"), weekend: this._t("ref_weekend") },
+        bandName: (ref, mode, multi) => (multi
+          ? this._t("band_group", { group: this._t(`group_${ref.key}`) })
+          : this._t(mode === "iqr" ? "band_iqr" : "band_minmax")),
         daysN: (n) => this._t("avg_of_days", { n }),
+        daysShort: (n) => this._t("days_short", { n }),
       },
     });
     let wrap = content.querySelector(".chart");
@@ -1330,25 +1448,58 @@ class PatternCard extends HTMLElement {
     }
     const colorOf = (v) => rgbaString(interpolateStops(stops, (v - lo) / (hi - lo)));
 
+    const rowLabel = (row) => {
+      if (row.weekday !== undefined) return names[row.weekday];
+      const ds = [...row.weekdays].sort((a, b) => a - b);
+      const contiguous = ds.every((d, i) => i === 0 || d === ds[i - 1] + 1);
+      return ds.length >= 2 && contiguous ? `${names[ds[0]]}–${names[ds[ds.length - 1]]}` : ds.map((d) => names[d]).join(", ");
+    };
+
+    // Differenzzeile: zweifarbig um 0, Werktage-Farbe für negativ, Wochenende-Farbe für positiv
+    const diff = m.diff && m.diff.some((c) => c.value != null) ? m.diff : null;
+    let diffMax = 0;
+    if (diff) for (const c of diff) if (c.value != null) diffMax = Math.max(diffMax, Math.abs(c.value));
+    if (!(diffMax > 0)) diffMax = 1;
+    const neg = parseRgb(colors.workday) || [239, 177, 24, 1];
+    const pos = parseRgb(colors.weekend) || [255, 114, 92, 1];
+    const diffColor = (v) => {
+      const c = v < 0 ? neg : pos;
+      return rgbaString([c[0], c[1], c[2], Math.min(1, Math.abs(v) / diffMax)]);
+    };
+    const signed = (v) => (v > 0 ? `+${fmt(v)}` : fmt(v));
+
     let html = "";
     m.rows.forEach((row, ri) => {
-      html += `<div class="wd" style="grid-row:${ri + 1};grid-column:1">${escapeHtml(names[row.weekday])}</div>`;
+      html += `<div class="wd" style="grid-row:${ri + 1};grid-column:1">${escapeHtml(rowLabel(row))}</div>`;
       row.cells.forEach((c, k) => {
         const bg = c.value == null ? "" : ` style="background:${colorOf(c.value)}"`;
         html += `<div class="cell" data-r="${ri}" data-k="${k}"${bg}></div>`;
       });
     });
+    let nRows = m.rows.length;
+    if (diff) {
+      nRows++;
+      html += `<div class="wd diff" style="grid-row:${nRows};grid-column:1" title="${escapeHtml(this._t("diff_label"))}">Δ</div>`;
+      diff.forEach((c, k) => {
+        const bg = c.value == null ? "" : ` style="background:${diffColor(c.value)}"`;
+        html += `<div class="cell diff" data-r="diff" data-k="${k}"${bg}></div>`;
+      });
+    }
     // Stundenbeschriftung alle 3 h
     const step = Math.max(1, Math.round(180 / slotMin));
-    const hourRow = m.rows.length + 1;
+    const hourRow = nRows + 1;
     for (let k = 0; k < S; k += step) {
       const h = Math.floor((k * slotMin) / 60);
       html += `<div class="hour" style="grid-row:${hourRow};grid-column:${k + 2} / span ${Math.min(step, S - k)}">${h}</div>`;
     }
     const gradient = `linear-gradient(to right, ${stops.map((s, i) => `${rgbaString(s)} ${Math.round((i / (stops.length - 1)) * 100)}%`).join(", ")})`;
-    const legend = `<div class="legend"><span dir="ltr">${escapeHtml(withUnit(fmt(lo), unit))}</span><span class="bar" style="background:${gradient}"></span><span dir="ltr">${escapeHtml(withUnit(fmt(hi), unit))}</span></div>`;
+    let legend = `<div class="legend"><span dir="ltr">${escapeHtml(withUnit(fmt(lo), unit))}</span><span class="bar" style="background:${gradient}"></span><span dir="ltr">${escapeHtml(withUnit(fmt(hi), unit))}</span></div>`;
+    if (diff) {
+      const dg = `linear-gradient(to right, ${rgbaString([neg[0], neg[1], neg[2], 1])}, ${rgbaString([neg[0], neg[1], neg[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 1])})`;
+      legend += `<div class="legend"><span>${escapeHtml(this._t("more_workday"))}</span><span dir="ltr">${escapeHtml(withUnit(signed(-diffMax), unit))}</span><span class="bar" style="background:${dg}"></span><span dir="ltr">${escapeHtml(withUnit(signed(diffMax), unit))}</span><span>${escapeHtml(this._t("more_weekend"))}</span></div>`;
+    }
 
-    content.innerHTML = `<div class="heatmap" style="--pc-slots:${S};--pc-rows:${m.rows.length}">${html}</div>${legend}`;
+    content.innerHTML = `<div class="heatmap" style="--pc-slots:${S};--pc-rows:${nRows}">${html}</div>${legend}`;
     this._chart = null;
 
     const grid = content.querySelector(".heatmap");
@@ -1356,18 +1507,28 @@ class PatternCard extends HTMLElement {
     const fmtWall = timeFormatter(this._hass, "UTC");
     const show = (cell) => {
       if (!cell?.classList?.contains("cell")) return;
-      const row = m.rows[Number(cell.dataset.r)];
+      const isDiff = cell.dataset.r === "diff";
+      const row = isDiff ? null : m.rows[Number(cell.dataset.r)];
       const k = Number(cell.dataset.k);
-      const c = row.cells[k];
+      const c = isDiff ? diff[k] : row.cells[k];
       grid.querySelectorAll(".cell.hover").forEach((x) => x.classList.remove("hover"));
       cell.classList.add("hover");
       const t0 = Date.UTC(2024, 0, 1, 0, 0) + k * slotMin * MIN_MS;
       const time = `${fmtWall(t0)} – ${fmtWall(t0 + slotMin * MIN_MS)}`;
-      const valueText = c.value == null ? "–" : withUnit(fmt(c.value), unit);
-      const color = c.value == null ? "var(--secondary-background-color)" : colorOf(c.value);
-      const label = this._t(`stat_${m.statistic}`);
+      let body;
+      if (isDiff) {
+        const a = m.rows[0].cells[k];
+        const b = m.rows[1].cells[k];
+        const line = (r, cc, color) => `<span class="marker" style="background:${color}"></span>${escapeHtml(rowLabel(r))}: <span dir="ltr">${escapeHtml(cc.value == null ? "–" : withUnit(fmt(cc.value), unit))}</span>`;
+        body = `${escapeHtml(time)}<br>${line(m.rows[0], a, rgbaString(neg))}<br>${line(m.rows[1], b, rgbaString(pos))}<br>${escapeHtml(this._t("diff_label"))}: <span dir="ltr">${escapeHtml(c.value == null ? "–" : withUnit(signed(c.value), unit))}</span>`;
+      } else {
+        const valueText = c.value == null ? "–" : withUnit(fmt(c.value), unit);
+        const color = c.value == null ? "var(--secondary-background-color)" : colorOf(c.value);
+        const label = this._t(`stat_${m.statistic}`);
+        body = `${escapeHtml(rowLabel(row))} ${escapeHtml(time)}<br><span class="marker" style="background:${color}"></span>${escapeHtml(label)}: <span dir="ltr">${escapeHtml(valueText)}</span><br><span class="muted">${escapeHtml(this._t("avg_of_days", { n: c.n }))}</span>`;
+      }
       const tip = this.shadowRoot.querySelector(".tooltip");
-      tip.innerHTML = `${escapeHtml(names[row.weekday])} ${escapeHtml(time)}<br><span class="marker" style="background:${color}"></span>${escapeHtml(label)}: <span dir="ltr">${escapeHtml(valueText)}</span><br><span class="muted">${escapeHtml(this._t("avg_of_days", { n: c.n }))}</span>`;
+      tip.innerHTML = body;
       tip.hidden = false;
       const card = this.shadowRoot.querySelector("ha-card");
       const cr = card.getBoundingClientRect();
@@ -1440,7 +1601,19 @@ const editorSchema = (cfg, kind, t) => {
       name: "weekdays",
       selector: { select: { multiple: true, mode: "list", options: WEEKDAYS.map((v, i) => ({ value: v, label: t(`wd_${i}`) })) } },
     },
+    {
+      name: "compare",
+      selector: { select: { mode: "dropdown", options: COMPARE_MODES.map((v) => ({ value: v, label: t(`compare_${v}`) })) } },
+    },
   ];
+  const compare = cfg.compare === "weekday_weekend";
+  if (mode === "graph" && !compare) {
+    schema.push({
+      name: "reference",
+      selector: { select: { mode: "dropdown", options: REFERENCE_MODES.map((v) => ({ value: v, label: t(`reference_${v}`) })) } },
+    });
+  }
+  if (mode === "heatmap" && compare) schema.push({ name: "difference", selector: { boolean: {} } });
   if (stats.length > 1) {
     schema.push({
       name: "statistic",
@@ -1508,12 +1681,19 @@ class PatternCardEditor extends HTMLElement {
       days: DEFAULT_DAYS,
       resolution: "auto",
       band: "iqr",
+      compare: "none",
+      reference: "auto",
+      difference: true,
       weekdays: [...WEEKDAYS],
       ...cfg,
       statistic: resolveStatistic(cfg.statistic, kind),
     };
     form.computeLabel = (s) => this._t(s.name);
-    form.computeHelper = (s) => (s.name === "days" ? this._t("helper_days") : s.name === "resolution" ? this._t("helper_resolution") : undefined);
+    form.computeHelper = (s) => ({
+      days: this._t("helper_days"),
+      resolution: this._t("helper_resolution"),
+      reference: this._t("helper_reference"),
+    })[s.name];
   }
 
   _changed(ev) {
@@ -1528,7 +1708,13 @@ class PatternCardEditor extends HTMLElement {
     const kind = guessKind(this._hass.states[v.entity]);
     if (v.statistic === (STATISTICS_BY_KIND[kind] || [])[0] || !(STATISTICS_BY_KIND[kind] || []).includes(v.statistic)) delete v.statistic;
     if (v.mode === "heatmap") { delete v.band; delete v.cumulative; }
-    if (v.mode === "graph") { delete v.min; delete v.max; }
+    if (v.mode === "graph") { delete v.min; delete v.max; delete v.difference; }
+    if (v.compare === "none") delete v.compare;
+    if (v.compare) delete v.reference;
+    else delete v.difference;
+    if (v.mode === "heatmap") delete v.reference;
+    if (v.reference === "auto") delete v.reference;
+    if (v.difference === true) delete v.difference;
     if (kind !== "counter") delete v.cumulative;
     Object.keys(v).forEach((k) => {
       if (v[k] === undefined || v[k] === "" || v[k] === null) delete v[k];
@@ -1545,5 +1731,5 @@ window.__patternCard = {
   WEEKDAYS, I18N, translate, stateActive, detectKind, guessKind, resolveStatistic, timeZoneOf, selectedWeekdays,
   tzOffset, wallToTs, ymdAdd, weekdayOf, buildDays, forEachOverlap, accumulateStats, accumulateHistory,
   dayValues, cumulate, quantile, slotStats, computeModel, cssColor, defaultColor, parseRgb, interpolateStops,
-  makeNumberFormatter, buildGraph, editorSchema, ensureChartBase,
+  makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND,
 };
