@@ -6,6 +6,7 @@ const dom = new JSDOM("<!doctype html><html><body></body></html>", { runScripts:
 const w = dom.window;
 const src = fs.readFileSync(new URL("../pattern-card.js", import.meta.url), "utf8");
 w.console.info = () => {};
+w.__PATTERN_CARD_TEST__ = true;
 w.eval(src);
 const P = w.__patternCard;
 
@@ -142,18 +143,18 @@ test("computeModel graph: Referenz ohne heute, Wochentagsfilter, kumuliert", () 
     }
   }
   const all = P.computeModel(days, { statistic: "sum", now, weekdays: P.selectedWeekdays({}), mode: "graph" });
-  assert.equal(all.refDays, 7);
-  assert.equal(all.reference[0].n, 7);
-  near(all.reference[0].mean, (5 + 6 + 7 + 8 + 9 + 10 + 11) / 7);
+  assert.equal(all.expectedDays, 7);
+  assert.equal(all.references[0].stats[0].n, 7);
+  near(all.references[0].stats[0].mean, (5 + 6 + 7 + 8 + 9 + 10 + 11) / 7);
   assert.equal(all.todayVals[11], 12);
   assert.equal(all.todayVals[12], null);
 
   const thu = P.computeModel(days, { statistic: "sum", now, weekdays: P.selectedWeekdays({ weekdays: ["thu"] }), mode: "graph" });
-  assert.equal(thu.refDays, 1);
-  assert.equal(thu.reference[0].mean, 5);
+  assert.equal(thu.expectedDays, 1);
+  assert.equal(thu.references[0].stats[0].mean, 5);
 
   const cum = P.computeModel(days, { statistic: "sum", now, weekdays: P.selectedWeekdays({}), mode: "graph", cumulative: true });
-  near(cum.reference[23].mean, 24 * (56 / 7));
+  near(cum.references[0].stats[23].mean, 24 * (56 / 7));
   assert.equal(cum.todayVals[11], 12 * 12);
   assert.equal(cum.todayVals[12], null);
 });
@@ -624,6 +625,20 @@ test("Karte graph: Vorher/Nachher-Legende und Prüfung des Stichtags", async () 
   card.remove();
 });
 
+test("Registrierung: doppelt geladen ohne Fehler, kein globaler Name ohne Testschalter", () => {
+  // zweites Laden in dasselbe Fenster (alte und neue Ressource gleichzeitig)
+  w.eval(src);
+  assert.equal(w.customCards.filter((c) => c.type === "pattern-card").length, 1);
+  const d2 = new JSDOM("<!doctype html><html><body></body></html>", { runScripts: "outside-only", pretendToBeVisual: true });
+  d2.window.console.info = () => {};
+  d2.window.eval(src);
+  assert.equal(d2.window.__patternCard, undefined);
+  assert.ok(d2.window.customElements.get("pattern-card"));
+  // Vorlage ohne Standardwert days
+  const stub = d2.window.customElements.get("pattern-card").getStubConfig({ states: {} });
+  assert.equal(stub.days, undefined);
+});
+
 test("periodPlan: verankerter Stichtag und relative Zeiträume", () => {
   const { periodPlan } = w.__patternCard;
   const today = { y: 2026, m: 11, d: 13 };
@@ -802,6 +817,7 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, weekdays: ["sun", "mon"], statistic: "events" } } }));
   assert.deepEqual([...out.weekdays], ["mon", "sun"]);
   assert.equal(out.statistic, "events");
+  assert.equal(out.days, undefined);
   assert.equal(out.resolution, undefined);
   assert.equal(out.compare, undefined);
   assert.equal(out.difference, undefined);

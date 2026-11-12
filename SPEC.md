@@ -123,6 +123,13 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 - **Installation an deiner Instanz** erst nach OK (Datei unter `/config/www/`, Ressource, Testdashboard), mit Eintrag im `CHANGELOG.md` von ha-organisation.
 - **Testdaten**: Strom `sensor.flur_kg_stromzahler_netz_leistung` (Messwert), `sensor.flur_kg_stromzahler_netz_import` (Zähler), Gäste-WC `binary_sensor.bewegung_eg_gaste_wc` und `light.licht_eg_gaste_wc` (Zustände, Verlauf erst ab 09.11.2026).
 
+## Aufräumen (0.8.2)
+
+- Registrierung wie bei Core-Karten robust gegen doppeltes Laden: `customElements.define` und `window.customCards` nur einmal
+- Interne Funktionen (`window.__patternCard`) nur mit Testschalter `window.__PATTERN_CARD_TEST__` (Tests, Vorschau), sonst kein globaler Name
+- Editor und Vorlage schreiben `days` nur, wenn es vom Standard 28 abweicht. `mode` bleibt immer in der Konfiguration, weil es die Karte grundlegend umschaltet
+- Altlasten im Modell entfernt (`reference`, `refDays`)
+
 ## Pfeil zum Verlauf (0.7.3)
 
 - Wie `hui-history-graph-card` und `hui-statistics-graph-card`: rechts im Titel ein `ha-icon-next` als Link auf `/history?entity_id=…&back=1&start_date=…`, Beginn des ausgewerteten Zeitraums. Beschriftung `panel.history` aus HA

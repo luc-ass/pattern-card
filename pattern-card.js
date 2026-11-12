@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.8.1";
+const CARD_VERSION = "0.8.2";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -748,7 +748,7 @@ const computeModel = (days, opts) => {
         lo = Math.min(lo, c.value);
         hi = Math.max(hi, c.value);
       }
-      // weekday: Kompatibilität für Zeilen aus genau einem Wochentag
+      // weekday: Zeile aus genau einem Wochentag, beschriftet mit dessen Namen
       return { ...spec, weekday: spec.weekdays.size === 1 && !spec.filter ? [...spec.weekdays][0] : undefined, cells, nDays: ds.length };
     });
     // Gruppen ohne Tage im Zeitraum (Stichtag außerhalb) entfallen
@@ -786,8 +786,6 @@ const computeModel = (days, opts) => {
   model.todayVals = prep(today);
   model.daysWithData = model.references.reduce((s, r) => s + r.daysWithData, 0);
   model.expectedDays = model.references.reduce((s, r) => s + r.expectedDays, 0);
-  model.reference = model.references[0]?.stats || [];
-  model.refDays = model.expectedDays;
   return model;
 };
 
@@ -1269,9 +1267,9 @@ class PatternCard extends HTMLElement {
       states.find((s) => s.attributes?.state_class === "measurement") ||
       states.find((s) => domainOf(s.entity_id) === "binary_sensor" && ["motion", "occupancy", "presence"].includes(s.attributes?.device_class));
     if (pick && domainOf(pick.entity_id) === "binary_sensor") {
-      return { entity: pick.entity_id, mode: "heatmap", days: DEFAULT_DAYS };
+      return { entity: pick.entity_id, mode: "heatmap" };
     }
-    return { entity: pick?.entity_id || "", mode: "graph", days: DEFAULT_DAYS };
+    return { entity: pick?.entity_id || "", mode: "graph" };
   }
 
   setConfig(config) {
@@ -1917,16 +1915,19 @@ class PatternCard extends HTMLElement {
   }
 }
 
-customElements.define("pattern-card", PatternCard);
+// doppelt geladene Ressource (z. B. alte und neue URL) nicht mit einem Fehler quittieren
+if (!customElements.get("pattern-card")) customElements.define("pattern-card", PatternCard);
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "pattern-card",
-  name: "Pattern Card",
-  description: "Daily and weekly patterns of a sensor: today vs. reference, or weekday × time of day heatmap",
-  preview: true,
-  documentationURL: "https://github.com/luc-ass/pattern-card",
-});
+if (!window.customCards.some((c) => c.type === "pattern-card")) {
+  window.customCards.push({
+    type: "pattern-card",
+    name: "Pattern Card",
+    description: "Daily and weekly patterns of a sensor: today vs. reference, or weekday × time of day heatmap",
+    preview: true,
+    documentationURL: "https://github.com/luc-ass/pattern-card",
+  });
+}
 
 /* --------------------------------------------------------------------------
  * Editor
@@ -2110,6 +2111,7 @@ class PatternCardEditor extends HTMLElement {
     if (Array.isArray(v.weekdays) && WEEKDAYS.every((w) => v.weekdays.includes(w))) delete v.weekdays;
     if (Array.isArray(v.weekdays)) v.weekdays = WEEKDAYS.filter((w) => v.weekdays.includes(w));
     if (v.resolution === "auto") delete v.resolution;
+    if (Number(v.days) === DEFAULT_DAYS) delete v.days;
     if (v.band === "both") delete v.band;
     if (v.cumulative === false) delete v.cumulative;
     const kind = guessKind(this._hass.states[v.entity]);
@@ -2149,10 +2151,10 @@ class PatternCardEditor extends HTMLElement {
   }
 }
 
-customElements.define("pattern-card-editor", PatternCardEditor);
+if (!customElements.get("pattern-card-editor")) customElements.define("pattern-card-editor", PatternCardEditor);
 
-// für Tests
-window.__patternCard = {
+// interne Funktionen nur für Tests und Vorschau, sonst kein globaler Name
+if (window.__PATTERN_CARD_TEST__) window.__patternCard = {
   WEEKDAYS, I18N, translate, stateActive, detectKind, guessKind, resolveStatistic, timeZoneOf, selectedWeekdays,
   tzOffset, wallToTs, ymdAdd, weekdayOf, buildDays, forEachOverlap, accumulateStats, accumulateHistory,
   dayValues, cumulate, quantile, slotStats, computeModel, cssColor, defaultColor, parseRgb, interpolateStops,
