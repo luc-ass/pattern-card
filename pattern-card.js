@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.6.1";
+const CARD_VERSION = "0.6.2";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -1074,6 +1074,8 @@ const STYLE = `
   .has-rows { --chart-max-height: 100%; }
   /* Graph wie hui-history-graph-card: kein Abstand oben, unten 8 px */
   .content.graph, .content.graph.no-name { padding: 0 16px 8px; }
+  /* wie .entry-container.line in state-history-charts */
+  .content.graph .chart { padding-top: 8px; }
   .chart { flex: 1; min-height: 0; }
   .chart ha-chart-base { height: 100%; }
   .message {
