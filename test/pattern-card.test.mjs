@@ -361,6 +361,9 @@ test("Karte graph: Messwert aus der Statistik an ha-chart-base, ohne Zoom", asyn
   assert.equal(chart.options.xAxis[0].type, "time");
   assert.equal(chart.options.yAxis.name, "W");
   assert.equal(chart.options.yAxis.axisLabel.formatter(600), "600");
+  assert.equal(chart.options.xAxis[0].axisLabel.showMaxLabel, false);
+  assert.ok(el.shadowRoot.querySelector(".content").classList.contains("graph"));
+  assert.match(el.shadowRoot.querySelector("style").textContent, /\.content\.graph, \.content\.graph\.no-name \{ padding: 0 16px 8px; \}/);
   const stat = calls.filter((c) => c.type === "recorder/statistics_during_period");
   assert.ok(stat.some((c) => c.period === "5minute"));
   assert.deepEqual({ ...stat[0].units }, { power: "W" });

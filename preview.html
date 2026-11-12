@@ -107,7 +107,7 @@ customElements.define("ha-chart-base", class extends HTMLElement {
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.6.0";
+const CARD_VERSION = "0.6.1";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -1099,12 +1099,15 @@ const buildGraph = (model, ctx) => {
     scale,
     splitNumber: 5,
     splitLine: { show: true },
-    axisLabel: { formatter: (val) => fmtAxis(val, digits) },
+    // wie state-history-chart-line
+    axisLine: { show: false },
+    axisLabel: { margin: 5, formatter: (val) => fmtAxis(val, digits) },
     ...(isState ? { min: 0, max: 100 } : {}),
   };
 
   const options = {
-    xAxis: [{ id: "xAxis", type: "time", min: b[0], max: b[S] }],
+    // ohne Beschriftung am rechten Rand (24:00), sonst schrumpft containLabel die Fläche
+    xAxis: [{ id: "xAxis", type: "time", min: b[0], max: b[S], axisLabel: { showMaxLabel: false } }],
     yAxis,
     legend: { type: "custom", show: !ctx.hideLegend, data: legendData },
     grid: { top: 15, left: 1, right: 1, bottom: 0, containLabel: true },
@@ -1162,6 +1165,8 @@ const STYLE = `
   .has-header { padding-top: 0; }
   .has-header.no-name { padding-top: 16px; }
   .has-rows { --chart-max-height: 100%; }
+  /* Graph wie hui-history-graph-card: kein Abstand oben, unten 8 px */
+  .content.graph, .content.graph.no-name { padding: 0 16px 8px; }
   .chart { flex: 1; min-height: 0; }
   .chart ha-chart-base { height: 100%; }
   .message {
@@ -1676,6 +1681,7 @@ class PatternCard extends HTMLElement {
         daysShort: (n) => this._t("days_short", { n }),
       },
     });
+    content.classList.add("graph");
     let wrap = content.querySelector(".chart");
     if (!wrap || !this._chart || !wrap.contains(this._chart)) {
       content.innerHTML = `<div class="chart"></div>`;
@@ -1774,6 +1780,7 @@ class PatternCard extends HTMLElement {
     }
 
     if (cfg.hide_legend) legend = "";
+    content.classList.remove("graph");
     content.innerHTML = `<div class="heatmap" style="--pc-slots:${S};--pc-rows:${nRows}">${html}</div>${legend}`;
     this._chart = null;
 
