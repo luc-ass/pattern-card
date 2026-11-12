@@ -107,7 +107,7 @@ customElements.define("ha-chart-base", class extends HTMLElement {
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.6.2";
+const CARD_VERSION = "0.6.3";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -1110,7 +1110,9 @@ const buildGraph = (model, ctx) => {
     xAxis: [{ id: "xAxis", type: "time", min: b[0], max: b[S], axisLabel: { showMaxLabel: false } }],
     yAxis,
     legend: { type: "custom", show: !ctx.hideLegend, data: legendData },
-    grid: { top: 15, left: 1, right: 1, bottom: 0, containLabel: true },
+    // top 12 statt 15: containLabel schiebt die Fläche um die halbe Höhe der obersten
+    // y-Beschriftung nach unten; so liegt sie wie in state-history-chart-line (gemessen, 3 px)
+    grid: { top: 12, left: 1, right: 1, bottom: 0, containLabel: true },
     tooltip: { trigger: "axis", renderMode: "html", confine: true, formatter: tooltipFormatter },
     // eigenes dataZoom schaltet Zoomen in ha-chart-base ab (_hasZoomableXAxis)
     dataZoom: [],
