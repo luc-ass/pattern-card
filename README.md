@@ -1,89 +1,167 @@
 # Pattern Card
 
-A Home Assistant Lovelace card that shows **patterns** of a single entity over a configurable period:
+A Home Assistant Lovelace card that shows the **daily and weekly patterns** of a single entity: is today a normal day, and when is a room usually occupied?
 
-- **Graph**: today's curve against a reference period (mean line plus 25–75 % and 10–90 % bands), by time of day
-- **Heatmap**: weekday × time of day, showing share of time active, number of events, mean or consumption
+![Graph: today against the last four weeks](docs/images/graph.png)
 
-It is meant to look and behave like a native card: the graph uses Home Assistant's own chart component (`ha-chart-base`), theme colors and number/time formats follow your profile, and the data comes from long-term statistics where available, otherwise from history.
+- **Graph**: today's curve against a reference period, by time of day. The reference is shown as a mean line with two nested bands (25–75 % and 10–90 % of the reference days).
+- **Heatmap**: weekday × time of day. Each cell shows the share of time active, the number of events, the mean or the consumption.
+- **Workdays vs. weekend**: compare both kinds of days in one graph, or in a heatmap with a difference row.
+
+It is meant to look and behave like a native card. The graph uses Home Assistant's own chart component, and theme colors as well as number and time formats follow your profile. The card picks its data source by itself: long-term statistics where they exist, history otherwise. It comes with a visual editor and is translated into English and German.
+
+> The screenshots show simulated data, rendered in the development preview. In Home Assistant the legend uses the native chips of the chart component.
 
 ## Installation
 
-### HACS (custom repository)
-1. HACS → ⋮ → Custom repositories → `https://github.com/luc-ass/pattern-card`, type *Dashboard*
-2. Install *Pattern Card*, reload the browser
+### HACS
+1. HACS → ⋮ → **Custom repositories** → add `https://github.com/luc-ass/pattern-card`, type **Dashboard**
+2. Search for *Pattern Card*, install it and reload the browser
+
+HACS adds the dashboard resource for you.
 
 ### Manual
-1. Copy `pattern-card.js` to `<config>/www/`
-2. Settings → Dashboards → ⋮ → Resources → add `/local/pattern-card.js` as *JavaScript module*
+1. Take `pattern-card.js` from the source archive of the [latest release](https://github.com/luc-ass/pattern-card/releases/latest) and copy it to `<config>/www/`
+2. Settings → Dashboards → ⋮ → **Resources** → add `/local/pattern-card.js` as *JavaScript module*
+3. Reload the browser
 
 ## Examples
 
+### Is today a normal day?
+
 ```yaml
-# Power today vs. the last 4 weeks
 type: custom:pattern-card
 entity: sensor.grid_power
-mode: graph
-days: 28
-
-# Energy since midnight vs. working days of the last 4 weeks
-type: custom:pattern-card
-entity: sensor.grid_energy_import
-mode: graph
-cumulative: true
-weekdays: [mon, tue, wed, thu, fri]
-
-# Power: workdays vs. weekend in one graph
-type: custom:pattern-card
-entity: sensor.grid_power
-mode: graph
-compare: weekday_weekend
-
-# Room occupancy: weekday × hour
-type: custom:pattern-card
-entity: binary_sensor.motion_guest_toilet
-mode: heatmap
-days: 56
 ```
 
+Today (solid line) against the reference days (dashed mean). By default the reference consists of the days of the same kind as today, so a Thursday is compared with Mon–Fri, a Saturday with Sat–Sun. The inner band holds the middle half of those days, the outer band 80 % of them.
+
+![Graph](docs/images/graph.png)
+
+### Workdays vs. weekend
+
+```yaml
+type: custom:pattern-card
+entity: sensor.grid_power
+compare: weekday_weekend
+name: Workdays vs. weekend
+```
+
+Two references in one graph, each with its own band, colored with Home Assistant's second and third graph colors. Every line and band can be toggled in the legend.
+
+![Graph comparing workdays and weekend](docs/images/graph-compare.png)
+
+### Consumption since midnight
+
+```yaml
+type: custom:pattern-card
+entity: sensor.grid_energy
+cumulative: true
+days: 14
+```
+
+For counters (`state_class: total` or `total_increasing`): how much has been used so far today, compared with what is usual up to this time.
+
+![Cumulative consumption](docs/images/graph-cumulative.png)
+
+### When is power used?
+
+```yaml
+type: custom:pattern-card
+entity: sensor.grid_power
+mode: heatmap
+days: 56
+color: amber
+```
+
+Mean per weekday and hour over eight weeks.
+
+![Heatmap of power by weekday and hour](docs/images/heatmap-power.png)
+
+### Room occupancy
+
+```yaml
+type: custom:pattern-card
+entity: binary_sensor.guest_toilet_motion
+mode: heatmap
+```
+
+For on/off entities the heatmap shows the share of each hour the entity was active. With `statistic: events` it counts how often it switched on instead.
+
+![Heatmap of room occupancy](docs/images/heatmap-occupancy.png)
+
+### Occupancy: workdays vs. weekend
+
+```yaml
+type: custom:pattern-card
+entity: binary_sensor.guest_toilet_motion
+mode: heatmap
+compare: weekday_weekend
+```
+
+Two rows instead of seven, plus a difference row (Δ = weekend − workdays). The difference row is colored with the workday color where workdays are higher and the weekend color where weekends are higher.
+
+![Heatmap comparing workdays and weekend with a difference row](docs/images/heatmap-compare.png)
+
 ## Options
+
+All options can also be set in the visual editor.
 
 | Option | Default | Description |
 | --- | --- | --- |
 | `entity` | – | Entity to analyse (required) |
 | `mode` | `graph` | `graph` or `heatmap` |
-| `name` | friendly name | Card title, `false` hides it |
-| `days` | `28` | Completed days before today used as reference |
-| `weekdays` | all | Only these weekdays (`mon` … `sun`) |
-| `statistic` | by type | `active`, `events` (states), `mean` (measurements), `sum` (counters) |
-| `resolution` | `auto` | `auto`, `5min`, `15min`, `30min`, `hour`. Auto: graph 15 min where data allows, heatmap 1 h |
-| `compare` | `none` | `weekday_weekend`: graph shows workdays and weekend as two references; heatmap shows two rows (Mon–Fri, Sat–Sun) plus a difference row |
-| `reference` | `auto` | Graph without `compare`: `auto` compares today with days of the same kind (workdays or weekend), `all` with every day. Ignored when `weekdays` is set |
-| `difference` | `true` | Heatmap with `compare`: show the difference row (weekend − workdays) |
-| `band` | `both` | Graph only: `both` (10–90 % and 25–75 % nested), `iqr` (25–75 %), `wide` (10–90 %), `minmax`, `none`. 10–90 % needs at least 10 days of data; with `compare`, `both` shows 25–75 % only |
+| `name` | friendly name | Card title; `false` hides it |
+| `days` | `28` | Completed days before today used for the reference and the heatmap |
+| `weekdays` | all | Only use these weekdays (`mon` … `sun`) |
+| `statistic` | by type | `active` or `events` for states, `mean` for measurements, `sum` for counters |
+| `resolution` | `auto` | `auto`, `5min`, `15min`, `30min`, `hour`. Auto: graph 15 min where the data allows it, heatmap 1 h |
+| `compare` | `none` | `weekday_weekend`: the graph shows workdays and weekend as two references; the heatmap shows Mon–Fri and Sat–Sun plus a difference row |
+| `reference` | `auto` | Graph without `compare`: `auto` uses the days of the same kind as today, `all` uses every day. Ignored when `weekdays` is set |
+| `difference` | `true` | Heatmap with `compare`: show the difference row |
+| `band` | `both` | Graph: `both` (10–90 % and 25–75 %), `iqr` (25–75 %), `wide` (10–90 %), `minmax`, `none` |
 | `cumulative` | `false` | Graph, counters only: consumption since midnight |
 | `hide_legend` | `false` | Hide the legend (graph: series, heatmap: color scale), as in the native statistics graph card |
-| `color` | state color | Today's line / heatmap color (hex, CSS or theme color name) |
-| `colors` | – | Heatmap only: list of two or more colors, low → high |
-| `min`, `max` | from data | Heatmap only: scale limits |
+| `color` | state color | Color of today's line or of the heatmap: hex, CSS or a theme color name such as `amber` |
+| `colors` | – | Heatmap: list of two or more colors from low to high, e.g. `["#e3f2fd", "#0d47a1"]` |
+| `min`, `max` | from data | Heatmap: scale limits |
+
+## How it works
 
 ### Data sources
 
 | Entity | Source | Values |
 | --- | --- | --- |
-| On/off-like states (`binary_sensor`, `light`, `switch`, `person`, …) | History (limited by `recorder: purge_keep_days`) | share active, events |
+| On/off-like states (`binary_sensor`, `light`, `switch`, `person`, …) | History | share active, events |
 | Events, buttons, scenes | History | events |
 | Sensors with `state_class: measurement` | Long-term statistics | mean |
 | Counters (`total`, `total_increasing`) | Long-term statistics | consumption |
 | Numeric sensors without statistics | History | time-weighted mean |
 
-The reference never includes today; the heatmap only uses completed time slots.
+- **History only reaches back as far as the recorder keeps it** (`recorder: purge_keep_days`, 10 days by default). For a longer reference, raise it.
+- **Resolution**: the 5-minute statistics are kept for the same time as the history. If they do not cover the whole period, the graph falls back to hourly values and says so below the title.
+- **Today is never part of the reference.** The heatmap only uses completed time slots.
+- **Time slots follow the wall clock** in the time zone of your profile; days with a daylight saving change are handled.
+- **Attributes are not supported.** To analyse one, create a template sensor with a `state_class`, so it also gets long-term statistics.
+
+### Bands
+
+The bands use percentiles rather than standard deviations. Power or occupancy data is rarely normally distributed, and ±2σ would run below zero or above 100 %.
+
+| Days with data | Bands shown |
+| --- | --- |
+| 10 or more | 10–90 % and 25–75 % |
+| 4 to 9 | 25–75 % only; the tooltip says from when 10–90 % appears |
+| fewer than 4 | min–max |
+
+With `compare`, `both` shows only the 25–75 % band per reference, so the graph does not end up with four overlapping areas.
 
 ## Development
 
-`npm test` runs the jsdom tests, `npm run preview` builds `preview.html` with simulated data (graph drawn by a small ECharts stand-in for `ha-chart-base`).
+- `npm test` runs the tests with jsdom.
+- `npm run preview` builds `preview.html` with simulated data. The graph is drawn there by a small ECharts stand-in for Home Assistant's chart component. Open it with `?lang=en` for English.
 
-> Note: `ha-chart-base` is an internal component of the Home Assistant frontend. The card is tested against frontend `20261028.5` (HA 2026.11); check the graph after Home Assistant updates.
+> `ha-chart-base` is an internal component of the Home Assistant frontend. The card is tested against frontend `20261028.5` (HA 2026.11). After Home Assistant updates, check that the graph still renders.
 
 ## License
 

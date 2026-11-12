@@ -78,8 +78,9 @@ customElements.define("ha-chart-base", class extends HTMLElement {
     const o = this._options;
     this._chart.setOption({
       ...o,
-      legend: { show: true, data: o.legend.data.map((d) => d.name), bottom: 0, textStyle: { color: v("--primary-text-color") } },
-      grid: { ...o.grid, bottom: 30 },
+      legend: { show: o.legend.show !== false, data: o.legend.data.map((d) => d.name), bottom: 0, textStyle: { color: v("--primary-text-color") } },
+      // Platz für die Legende unter der Achse, bei vielen Einträgen zweizeilig
+      grid: { ...o.grid, bottom: o.legend.show === false ? 4 : o.legend.data.length > 4 ? 56 : 32 },
       xAxis: o.xAxis.map((x) => ({ ...x, axisLabel: { color: v("--secondary-text-color"), formatter: "{HH}:{mm}" }, splitLine: { show: false } })),
       yAxis: { ...o.yAxis, axisLabel: { ...o.yAxis.axisLabel, color: v("--secondary-text-color") }, nameTextStyle: { color: v("--secondary-text-color"), align: "left" }, splitLine: { lineStyle: { color: v("--divider-color") } } },
       tooltip: { ...o.tooltip, backgroundColor: v("--card-background-color"), borderColor: v("--divider-color"), textStyle: { color: v("--primary-text-color"), fontSize: 12 } },
@@ -1877,11 +1878,20 @@ const localHour = (t) => ((t + P.tzOffset(t, TZ)) / H) % 24;
 const weekdayAt = (t) => (new Date(t + P.tzOffset(t, TZ)).getUTCDay() + 6) % 7;
 
 // Leistung: Grundlast, Morgen- und Abendspitze, Wochenende später
+// Sprache der Vorschau: ?lang=en für die Bilder der README
+const LANG = new URLSearchParams(location.search).get("lang") === "en" ? "en" : "de";
+const L = (de, en) => (LANG === "en" ? en : de);
+// Streuung je Tag, damit die Bänder sichtbar werden
+const dayKey = (t) => Math.floor((t + P.tzOffset(t, TZ)) / 864e5);
 const power = (t) => {
   const h = localHour(t);
   const we = weekdayAt(t) >= 5;
   const peak = (c, w, a) => a * Math.exp(-((h - c) ** 2) / (2 * w * w));
-  return 180 + peak(we ? 9.5 : 7, 0.8, 600) + peak(12.5, 1, we ? 900 : 300) + peak(19, 1.5, 1100) + rnd(Math.floor(t / 300e3)) * 250;
+  const d = dayKey(t);
+  const s1 = (rnd(d * 7.13) - 0.5) * 1.6;
+  const s2 = (rnd(d * 3.71) - 0.5) * 2;
+  const a = 0.6 + rnd(d * 1.97) * 0.8;
+  return 180 + peak((we ? 9.5 : 7) + s1, 0.8, 600 * a) + peak(12.5 + s2, 1, (we ? 900 : 300) * (0.5 + rnd(d * 5.3))) + peak(19 + s1 / 2, 1.5, 1100 * a) + rnd(Math.floor(t / 300e3)) * 250;
 };
 // Bewegung Gäste-WC: kurze Besuche, häufiger morgens und abends
 const motionEntries = (start, end) => {
@@ -1898,13 +1908,13 @@ const motionEntries = (start, end) => {
 };
 
 const states = {
-  "sensor.leistung": { entity_id: "sensor.leistung", state: "642", attributes: { friendly_name: "Strom Netzbezug", unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
-  "sensor.zaehler": { entity_id: "sensor.zaehler", state: "12345", attributes: { friendly_name: "Stromzähler", unit_of_measurement: "kWh", state_class: "total_increasing", device_class: "energy" } },
-  "binary_sensor.bewegung": { entity_id: "binary_sensor.bewegung", state: "off", attributes: { friendly_name: "Bewegung Gäste-WC", device_class: "motion" } },
+  "sensor.leistung": { entity_id: "sensor.leistung", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
+  "sensor.zaehler": { entity_id: "sensor.zaehler", state: "12345", attributes: { friendly_name: L("Stromzähler", "Grid energy"), unit_of_measurement: "kWh", state_class: "total_increasing", device_class: "energy" } },
+  "binary_sensor.bewegung": { entity_id: "binary_sensor.bewegung", state: "off", attributes: { friendly_name: L("Bewegung Gäste-WC", "Guest toilet motion"), device_class: "motion" } },
 };
 
 const hass = {
-  locale: { language: "de", number_format: "language", time_format: "24", time_zone: "server" },
+  locale: { language: LANG, number_format: "language", time_format: "24", time_zone: "server" },
   config: { time_zone: TZ },
   states,
   entities: {},
@@ -1935,14 +1945,14 @@ const hass = {
 
 const configs = [
   { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28 },
-  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, weekdays: ["sat", "sun"], band: "minmax", name: "Strom am Wochenende" },
+  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, weekdays: ["sat", "sun"], band: "minmax", name: L("Strom am Wochenende", "Power at weekends") },
   { type: "custom:pattern-card", entity: "sensor.zaehler", mode: "graph", days: 14, cumulative: true },
   { type: "custom:pattern-card", entity: "sensor.leistung", mode: "heatmap", days: 56, color: "amber" },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28 },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, statistic: "events", colors: ["#e3f2fd", "#0d47a1"] },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "graph", days: 28 },
-  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: "Werktage gegen Wochenende" },
-  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: "Belegung Werktage/Wochenende" },
+  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: L("Werktage gegen Wochenende", "Workdays vs. weekend") },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: L("Belegung Werktage/Wochenende", "Occupancy: workdays vs. weekend") },
 ];
 
 const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");
