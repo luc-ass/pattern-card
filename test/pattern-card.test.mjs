@@ -299,6 +299,9 @@ test("Karte heatmap: Bewegungsmelder aus dem Verlauf", async () => {
   await flush();
   assert.equal(root.querySelector(".sub").hidden, true);
   assert.equal(root.querySelector(".sub").textContent, "");
+  // Abstand zwischen Titel und Raster auch ohne Untertitel
+  assert.ok(root.querySelector(".content").classList.contains("heatmap"));
+  assert.match(root.querySelector("style").textContent, /\.content\.heatmap\.has-header:not\(\.no-name\) \{ padding-top: 12px; \}/);
   assert.equal(root.querySelector(".title").textContent, "Bewegung Gäste-WC");
   assert.equal(root.querySelector(".card-header").hidden, false);
   el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14, hide_subtitle: true, name: false });

@@ -107,7 +107,7 @@ customElements.define("ha-chart-base", class extends HTMLElement {
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.7.1";
+const CARD_VERSION = "0.7.2";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -1181,6 +1181,8 @@ const STYLE = `
   .has-rows { --chart-max-height: 100%; }
   /* Graph wie hui-history-graph-card: kein Abstand oben, unten 8 px */
   .content.graph, .content.graph.no-name { padding: 0 16px 8px; }
+  /* Heatmap unter Titel oder Untertitel: eigener Abstand, den sonst das Diagramm mitbringt */
+  .content.heatmap.has-header:not(.no-name) { padding-top: 12px; }
   /* wie .entry-container.line in state-history-charts */
   .content.graph .chart { padding-top: 8px; }
   .chart { flex: 1; min-height: 0; }
@@ -1714,6 +1716,7 @@ class PatternCard extends HTMLElement {
       },
     });
     content.classList.add("graph");
+    content.classList.remove("heatmap");
     let wrap = content.querySelector(".chart");
     if (!wrap || !this._chart || !wrap.contains(this._chart)) {
       content.innerHTML = `<div class="chart"></div>`;
@@ -1814,6 +1817,7 @@ class PatternCard extends HTMLElement {
 
     if (cfg.hide_legend) legend = "";
     content.classList.remove("graph");
+    content.classList.add("heatmap");
     content.innerHTML = `<div class="heatmap" style="--pc-slots:${S};--pc-rows:${nRows}">${html}</div>${legend}`;
     this._chart = null;
 
