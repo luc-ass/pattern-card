@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.8.0";
+const CARD_VERSION = "0.8.1";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -144,6 +144,7 @@ const I18N = {
     more_recent: "more recently",
     more_earlier: "more before",
     days_before_after: "{before} days before · {after} after",
+    days_before_today: "{before} days before · after: today so far",
     days_recent: "{after} vs. {before} days before",
     since: "Date of the change",
     helper_since: "Days from this date on count as “after”",
@@ -239,6 +240,7 @@ const I18N = {
     more_recent: "mehr zuletzt",
     more_earlier: "mehr davor",
     days_before_after: "{before} Tage vorher · {after} nachher",
+    days_before_today: "{before} Tage vorher · nachher bisher nur heute",
     days_recent: "{after} gegen {before} Tage davor",
     since: "Stichtag der Änderung",
     helper_since: "Tage ab diesem Datum zählen als „nachher“",
@@ -1573,7 +1575,12 @@ class PatternCard extends HTMLElement {
     const days = Math.max(1, Math.round(Number(cfg.days) || DEFAULT_DAYS));
     const pp = m?.periods;
     if (pp && cfg.compare === "recent") parts.push(this._t("days_recent", { after: pp.after, before: pp.before }));
-    else if (pp && cfg.compare === "before_after") parts.push(this._t("days_before_after", { before: pp.before, after: pp.after }));
+    else if (pp && cfg.compare === "before_after") {
+      // nachher noch ohne abgeschlossenen Tag: Stichtag heute (zählt mit seinen abgeschlossenen Stunden) oder in der Zukunft
+      const sinceToday = pp.after === 0 && m.today && ymdCmp(pp.split, m.today.ymd) === 0;
+      if (pp.after > 0) parts.push(this._t("days_before_after", { before: pp.before, after: pp.after }));
+      else parts.push(this._t(sinceToday ? "days_before_today" : "days_n", { before: pp.before, n: pp.before }));
+    }
     else parts.push(this._t("days_n", { n: days }));
     const sel = selectedWeekdays(cfg);
     if (sel.size < 7) {

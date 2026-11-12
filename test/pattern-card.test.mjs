@@ -692,6 +692,14 @@ test("Karte heatmap: letzte Tage gegen die Zeit davor, Abschnitte mit Lücke", a
   assert.ok(refCalls.every((c) => Math.abs((c[1] - c[0]) / (24 * H) - 14) < 0.1));
   assert.deepEqual([...card2.shadowRoot.querySelectorAll(".wd")].map((x) => x.textContent).slice(0, 2).map((t) => t.replace(/\.? 2024/, "")), ["Vor 1. Mai", "Letzte 14 Tage"]);
   card2.remove();
+
+  // Stichtag heute: nachher hat noch keinen abgeschlossenen Tag
+  const t = new Date();
+  const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  const card3 = mount({ type: "custom:pattern-card", entity: "sensor.p", mode: "heatmap", days: 14, compare: "before_after", since: todayStr, resolution: "hour" }, hass);
+  await flush(20);
+  assert.match(card3.shadowRoot.querySelector(".sub").textContent, /^14 Tage vorher · nachher bisher nur heute/);
+  card3.remove();
 });
 
 
