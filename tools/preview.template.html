@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Pattern Card – Vorschau</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  /* HA-Theme-Variablen (Standard hell/dunkel, gekürzt) */
+  :root {
+    --primary-color: #03a9f4; --primary-text-color: #212121; --secondary-text-color: #727272;
+    --card-background-color: #fff; --primary-background-color: #fafafa; --secondary-background-color: #e5e5e5;
+    --divider-color: rgba(0,0,0,.12); --info-color: #039be5; --disabled-text-color: #bdbdbd;
+    --graph-color-1: #4269d0; --state-active-color: #ff9800; --state-binary_sensor-active-color: #ff9800;
+    --state-light-active-color: #ffc107; --amber-color: #ffc107; --red-color: #f44336; --green-color: #4caf50;
+    --blue-color: #2196f3; --purple-color: #926bc7; --teal-color: #009688;
+    --ha-font-size-xs: 10px; --ha-font-size-s: 12px; --ha-font-size-m: 14px; --ha-font-size-2xl: 24px;
+    font-family: Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b; --card-background-color: #1c1c1c;
+    --primary-background-color: #111; --secondary-background-color: #282828; --divider-color: rgba(225,225,225,.12);
+  }
+  body { margin: 0; background: var(--primary-background-color); color: var(--primary-text-color); }
+  header { padding: 16px 24px; display: flex; gap: 16px; align-items: center; }
+  header h1 { font-size: 20px; font-weight: 500; margin: 0; flex: 1; }
+  header button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: inherit; cursor: pointer; }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; padding: 0 24px 24px; }
+  .slot p { margin: 4px 4px 8px; font-size: 12px; color: var(--secondary-text-color); font-family: monospace; white-space: pre; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pattern Card – Vorschau mit simulierten Daten</h1>
+  <button id="theme">Hell/Dunkel</button>
+</header>
+<main id="cards"></main>
+
+<script>
+/* ---- Stubs für HA-Elemente ---- */
+customElements.define("ha-card", class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" }).innerHTML = `<style>
+      :host { display:block; background:var(--card-background-color); border:1px solid var(--divider-color);
+        border-radius:12px; color:var(--primary-text-color); position:relative; }
+      ::slotted(.card-header) { font-size:var(--ha-font-size-2xl); line-height:1.2; padding:20px 16px 24px; margin:0; font-weight:400; }
+    </style><slot></slot>`;
+  }
+});
+customElements.define("ha-alert", class extends HTMLElement {
+  connectedCallback() { this.style.cssText = "display:block;padding:8px 12px;border-radius:4px;background:rgba(255,152,0,.12)"; }
+});
+customElements.define("ha-chart-tooltip-marker", class extends HTMLElement {
+  connectedCallback() {
+    this.style.cssText = `display:inline-block;width:10px;height:10px;border-radius:10px;margin-inline-end:4px;vertical-align:middle;background:${this.getAttribute("color")}`;
+  }
+});
+/* Nachbau von ha-chart-base mit ECharts aus dem CDN, nur für die Vorschau */
+customElements.define("ha-chart-base", class extends HTMLElement {
+  set data(v) { this._data = v; this._update(); }
+  get data() { return this._data; }
+  set options(v) { this._options = v; this._update(); }
+  get options() { return this._options; }
+  connectedCallback() {
+    if (!this._div) {
+      this._div = document.createElement("div");
+      this._div.style.cssText = "width:100%;height:240px";
+      this.appendChild(this._div);
+      new ResizeObserver(() => this._chart && this._chart.resize()).observe(this._div);
+    }
+    this._update();
+  }
+  _update() {
+    if (!this._div || !this._data || !this._options || !window.echarts) return;
+    const cs = getComputedStyle(this);
+    const v = (n) => cs.getPropertyValue(n).trim();
+    this._chart = this._chart || echarts.init(this._div);
+    const o = this._options;
+    this._chart.setOption({
+      ...o,
+      legend: { show: true, data: o.legend.data.map((d) => d.name), bottom: 0, textStyle: { color: v("--primary-text-color") } },
+      grid: { ...o.grid, bottom: 30 },
+      xAxis: o.xAxis.map((x) => ({ ...x, axisLabel: { color: v("--secondary-text-color"), formatter: "{HH}:{mm}" }, splitLine: { show: false } })),
+      yAxis: { ...o.yAxis, axisLabel: { ...o.yAxis.axisLabel, color: v("--secondary-text-color") }, nameTextStyle: { color: v("--secondary-text-color"), align: "left" }, splitLine: { lineStyle: { color: v("--divider-color") } } },
+      tooltip: { ...o.tooltip, backgroundColor: v("--card-background-color"), borderColor: v("--divider-color"), textStyle: { color: v("--primary-text-color"), fontSize: 12 } },
+      series: this._data,
+    }, true);
+  }
+});
+</script>
+
+<script>
+<!--__CARD_SOURCE__-->
+</script>
+
+<script>
+/* ---- Simulierte Daten ---- */
+const TZ = "Europe/Berlin";
+const H = 3600e3;
+const rnd = (seed) => { let x = Math.sin(seed) * 10000; return x - Math.floor(x); };
+const P = window.__patternCard;
+const localHour = (t) => ((t + P.tzOffset(t, TZ)) / H) % 24;
+const weekdayAt = (t) => (new Date(t + P.tzOffset(t, TZ)).getUTCDay() + 6) % 7;
+
+// Leistung: Grundlast, Morgen- und Abendspitze, Wochenende später
+const power = (t) => {
+  const h = localHour(t);
+  const we = weekdayAt(t) >= 5;
+  const peak = (c, w, a) => a * Math.exp(-((h - c) ** 2) / (2 * w * w));
+  return 180 + peak(we ? 9.5 : 7, 0.8, 600) + peak(12.5, 1, we ? 900 : 300) + peak(19, 1.5, 1100) + rnd(Math.floor(t / 300e3)) * 250;
+};
+// Bewegung Gäste-WC: kurze Besuche, häufiger morgens und abends
+const motionEntries = (start, end) => {
+  const out = [{ s: "off", lu: start / 1000 }];
+  for (let t = Math.ceil(start / 600e3) * 600e3; t < end; t += 600e3) {
+    const h = localHour(t);
+    const p = (h > 6 && h < 9 ? 0.35 : 0) + (h > 17 && h < 23 ? 0.25 : 0) + (h > 9 && h < 17 ? (weekdayAt(t) >= 5 ? 0.2 : 0.04) : 0) + 0.01;
+    if (rnd(t / 1000) < p) {
+      const dur = 60e3 + rnd(t / 777) * 240e3;
+      out.push({ s: "on", lu: t / 1000 }, { s: "off", lu: Math.min(end, t + dur) / 1000 });
+    }
+  }
+  return out;
+};
+
+const states = {
+  "sensor.leistung": { entity_id: "sensor.leistung", state: "642", attributes: { friendly_name: "Strom Netzbezug", unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
+  "sensor.zaehler": { entity_id: "sensor.zaehler", state: "12345", attributes: { friendly_name: "Stromzähler", unit_of_measurement: "kWh", state_class: "total_increasing", device_class: "energy" } },
+  "binary_sensor.bewegung": { entity_id: "binary_sensor.bewegung", state: "off", attributes: { friendly_name: "Bewegung Gäste-WC", device_class: "motion" } },
+};
+
+const hass = {
+  locale: { language: "de", number_format: "language", time_format: "24", time_zone: "server" },
+  config: { time_zone: TZ },
+  states,
+  entities: {},
+  themes: { darkMode: false },
+  callWS: async (msg) => {
+    const s = Date.parse(msg.start_time);
+    const e = Math.min(Date.parse(msg.end_time), Date.now());
+    const id = (msg.statistic_ids || msg.entity_ids)[0];
+    if (msg.type === "recorder/get_statistics_metadata") {
+      if (id === "sensor.leistung") return [{ statistic_id: id, has_sum: false, mean_type: 1, unit_class: "power" }];
+      if (id === "sensor.zaehler") return [{ statistic_id: id, has_sum: true, mean_type: 0, unit_class: "energy" }];
+      return [];
+    }
+    if (msg.type === "recorder/statistics_during_period") {
+      const step = msg.period === "hour" ? H : 300e3;
+      const rows = [];
+      for (let t = Math.ceil(s / step) * step; t + step <= e; t += step) {
+        let m = 0;
+        for (let u = t; u < t + step; u += 300e3) m += power(u) / (step / 300e3);
+        rows.push(id === "sensor.zaehler" ? { start: t, end: t + step, change: (m * step) / H / 1000 } : { start: t, end: t + step, mean: m });
+      }
+      return { [id]: rows };
+    }
+    if (msg.type === "history/history_during_period") return { [id]: motionEntries(s, e) };
+    return null;
+  },
+};
+
+const configs = [
+  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28 },
+  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, weekdays: ["sat", "sun"], band: "minmax", name: "Strom am Wochenende" },
+  { type: "custom:pattern-card", entity: "sensor.zaehler", mode: "graph", days: 14, cumulative: true },
+  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "heatmap", days: 56, color: "amber" },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28 },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, statistic: "events", colors: ["#e3f2fd", "#0d47a1"] },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "graph", days: 28 },
+];
+
+const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");
+const cards = [];
+for (const c of configs) {
+  const slot = document.createElement("div");
+  slot.className = "slot";
+  slot.innerHTML = `<p>${yaml(c)}</p>`;
+  const el = document.createElement("pattern-card");
+  el.setConfig(c);
+  slot.appendChild(el);
+  document.getElementById("cards").appendChild(slot);
+  el.hass = hass;
+  cards.push(el);
+}
+
+document.getElementById("theme").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme !== "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  const h = { ...hass, themes: { darkMode: dark } };
+  cards.forEach((c) => { c.hass = h; });
+});
+</script>
+</body>
+</html>

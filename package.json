@@ -1,0 +1,14 @@
+{
+  "name": "pattern-card",
+  "version": "0.1.0",
+  "description": "Home Assistant card showing daily and weekly patterns of a sensor (graph vs. reference, weekday × hour heatmap)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/pattern-card.test.mjs",
+    "preview": "node tools/build-preview.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}
