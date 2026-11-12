@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.4.0";
+const CARD_VERSION = "0.4.1";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -733,6 +733,18 @@ const makeNumberFormatter = (hass, entityId, statistic) => {
   };
 };
 
+/** Achsenbeschriftung wie _formatYAxisLabel in HA: feste Stellen, die 0 ohne */
+const makeAxisFormatter = (hass) => {
+  const loc = numberLocale(hass);
+  const grouping = hass?.locale?.number_format !== "none";
+  const cache = new Map();
+  return (v, digits) => {
+    const d = v === 0 ? 0 : digits;
+    if (!cache.has(d)) cache.set(d, new Intl.NumberFormat(loc, { minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: grouping }));
+    return cache.get(d).format(v);
+  };
+};
+
 const timeFormatter = (hass, tz) => {
   const tf = hass?.locale?.time_format;
   const opts = { hour: "2-digit", minute: "2-digit", timeZone: tz };
@@ -765,6 +777,39 @@ const withUnit = (text, unit) => {
 /* --------------------------------------------------------------------------
  * Graph: Serien und Optionen für ha-chart-base
  * ------------------------------------------------------------------------ */
+
+/** wie nice(val, true) in ECharts: „runder“ Tick-Abstand */
+const niceInterval = (val) => {
+  const exponent = Math.floor(Math.log10(val));
+  const exp10 = 10 ** exponent;
+  const f = val / exp10;
+  const nf = f < 1.5 ? 1 : f < 2.5 ? 2 : f < 4 ? 3 : f < 7 ? 5 : 10;
+  const out = nf * exp10;
+  return exponent >= -20 ? +out.toFixed(exponent < 0 ? -exponent : 0) : out;
+};
+
+/** Nachkommastellen einer Zahl wie getPrecision in ECharts */
+const decimalsOf = (val) => {
+  if (!Number.isFinite(val)) return 0;
+  const str = String(val);
+  const e = str.indexOf("e-");
+  if (e > 0) return Number(str.slice(e + 2)) + Math.max(0, (str.slice(0, e).split(".")[1] || "").length);
+  const dot = str.indexOf(".");
+  return dot < 0 ? 0 : str.length - dot - 1;
+};
+
+/**
+ * Nachkommastellen der y-Achse wie computeYAxisFractionDigits in HA:
+ * aus dem Tick-Abstand bei 5 Intervallen, nicht aus der Genauigkeit des Werts.
+ */
+const axisFractionDigits = (min, max, includeZero = false) => {
+  const lo = includeZero ? Math.min(min, 0) : min;
+  const hi = includeZero ? Math.max(max, 0) : max;
+  const range = hi - lo;
+  if (!Number.isFinite(range) || range <= 0) return 1;
+  if (range <= Math.max(Math.abs(lo), Math.abs(hi)) * 1e-10) return 1;
+  return decimalsOf(niceInterval(range / 5));
+};
 
 /**
  * Bänder einer Referenz, von außen nach innen.
@@ -888,15 +933,34 @@ const buildGraph = (model, ctx) => {
     return el;
   };
 
+  // Nachkommastellen der Achse aus dem Wertebereich aller gezeichneten Werte, wie in HA
+  const scale = !isState && !isEvents && !cumulative && statistic !== "sum";
+  let lo = Infinity;
+  let hi = -Infinity;
+  const scan = (x) => {
+    if (x == null || !Number.isFinite(x)) return;
+    if (x < lo) lo = x;
+    if (x > hi) hi = x;
+  };
+  todayVals.forEach(scan);
+  for (const r of refs) {
+    for (const st of r.ref.stats) {
+      scan(st.mean);
+      for (const band of r.bands) { scan(st[band.lo]); scan(st[band.hi]); }
+    }
+  }
+  const digits = isState ? axisFractionDigits(0, 100) : axisFractionDigits(lo, hi, !scale);
+  const fmtAxis = ctx.fmtAxis || ((val) => ctx.fmtNumber(val));
   const yAxis = {
     type: "value",
     name: ctx.unit,
     nameGap: 2,
     nameTextStyle: { align: "left" },
     position: "left",
-    scale: !isState && !isEvents && !cumulative && statistic !== "sum",
+    scale,
+    splitNumber: 5,
     splitLine: { show: true },
-    axisLabel: { formatter: (val) => ctx.fmtNumber(val) },
+    axisLabel: { formatter: (val) => fmtAxis(val, digits) },
     ...(isState ? { min: 0, max: 100 } : {}),
   };
 
@@ -910,7 +974,7 @@ const buildGraph = (model, ctx) => {
     dataZoom: [],
   };
 
-  return { data: series, options, refs, slotOfX };
+  return { data: series, options, refs, slotOfX, axisDigits: digits };
 };
 
 /* --------------------------------------------------------------------------
@@ -1427,6 +1491,7 @@ class PatternCard extends HTMLElement {
       hideLegend: !!this._config.hide_legend,
       cumulative,
       fmtNumber: this._fmt(),
+      fmtAxis: makeAxisFormatter(this._hass),
       fmtTime: timeFormatter(this._hass, m.tz),
       label: {
         today: this._t("today"),
@@ -1771,4 +1836,5 @@ window.__patternCard = {
   tzOffset, wallToTs, ymdAdd, weekdayOf, buildDays, forEachOverlap, accumulateStats, accumulateHistory,
   dayValues, cumulate, quantile, slotStats, computeModel, cssColor, defaultColor, parseRgb, interpolateStops,
   makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND, bandsFor,
+  axisFractionDigits, niceInterval, makeAxisFormatter,
 };

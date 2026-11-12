@@ -206,6 +206,22 @@ test("buildGraph: zwei Bänder ab 10 Tagen, Legende innen vor außen", () => {
   assert.ok(!/ab 10/.test(tip));
 });
 
+
+test("y-Achse: Nachkommastellen aus dem Tick-Abstand wie in HA", () => {
+  assert.equal(P.axisFractionDigits(1.84, 2.21), 1); // E10: Schritte 0,1
+  assert.equal(P.axisFractionDigits(120, 1840), 0);
+  assert.equal(P.axisFractionDigits(0.12, 0.18), 2);
+  assert.equal(P.axisFractionDigits(5, 5), 1);
+  assert.equal(P.axisFractionDigits(0, 100), 0);
+  assert.equal(P.niceInterval(0.074), 0.1);
+  assert.equal(P.niceInterval(0.06), 0.05);
+  const f = P.makeAxisFormatter({ locale: { language: "de", number_format: "language" } });
+  assert.equal(f(2, 1), "2,0");
+  assert.equal(f(1.9, 1), "1,9");
+  assert.equal(f(0, 1), "0");
+  assert.equal(f(1500, 0), "1.500");
+});
+
 /* ---- Typen, Farben ---- */
 
 test("detectKind und guessKind", () => {
@@ -327,6 +343,7 @@ test("Karte graph: Messwert aus der Statistik an ha-chart-base, ohne Zoom", asyn
   assert.equal(el.shadowRoot.querySelector("ha-chart-base").options.legend.show, false);
   assert.equal(chart.options.xAxis[0].type, "time");
   assert.equal(chart.options.yAxis.name, "W");
+  assert.equal(chart.options.yAxis.axisLabel.formatter(600), "600");
   const stat = calls.filter((c) => c.type === "recorder/statistics_during_period");
   assert.ok(stat.some((c) => c.period === "5minute"));
   assert.deepEqual({ ...stat[0].units }, { power: "W" });

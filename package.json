@@ -1,6 +1,6 @@
 {
   "name": "pattern-card",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Home Assistant card showing daily and weekly patterns of a sensor (graph vs. reference, weekday × hour heatmap)",
   "private": true,
   "type": "module",
