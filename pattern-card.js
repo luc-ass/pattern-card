@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.4.1";
+const CARD_VERSION = "0.5.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -129,6 +129,7 @@ const I18N = {
     helper_reference: "Only applies without your own selection of weekdays",
     difference: "Difference row (weekend − workdays)",
     hide_legend: "Hide legend",
+    hide_subtitle: "Hide subtitle (period and hints)",
   },
   de: {
     today: "Heute",
@@ -193,6 +194,7 @@ const I18N = {
     helper_reference: "Gilt nur ohne eigene Auswahl der Wochentage",
     difference: "Differenzzeile (Wochenende − Werktage)",
     hide_legend: "Legende ausblenden",
+    hide_subtitle: "Untertitel ausblenden (Zeitraum und Hinweise)",
   },
 };
 
@@ -1409,8 +1411,11 @@ class PatternCard extends HTMLElement {
     if (!header || !this._config) return;
     const title = this._title();
     header.querySelector(".title").textContent = title;
-    header.querySelector(".sub").textContent = this._hass ? this._subtitle() : "";
-    header.hidden = false;
+    const sub = header.querySelector(".sub");
+    sub.textContent = this._hass && !this._config.hide_subtitle ? this._subtitle() : "";
+    sub.hidden = !!this._config.hide_subtitle;
+    // ohne Titel und Untertitel entfällt der Kopf ganz
+    header.hidden = !title && !!this._config.hide_subtitle;
     root.querySelector(".content").classList.toggle("no-name", !title);
     if (!title) header.querySelector(".title").hidden = true;
     else header.querySelector(".title").hidden = false;
@@ -1682,6 +1687,7 @@ const editorSchema = (cfg, kind, t) => {
       },
     },
     { name: "name", selector: { text: {} } },
+    { name: "hide_subtitle", selector: { boolean: {} } },
     {
       type: "grid",
       name: "",
@@ -1819,6 +1825,7 @@ class PatternCardEditor extends HTMLElement {
     if (v.reference === "auto") delete v.reference;
     if (v.difference === true) delete v.difference;
     if (v.hide_legend === false) delete v.hide_legend;
+    if (v.hide_subtitle === false) delete v.hide_subtitle;
     if (kind !== "counter") delete v.cumulative;
     Object.keys(v).forEach((k) => {
       if (v[k] === undefined || v[k] === "" || v[k] === null) delete v[k];

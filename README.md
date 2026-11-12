@@ -121,6 +121,7 @@ All options can also be set in the visual editor.
 | `difference` | `true` | Heatmap with `compare`: show the difference row |
 | `band` | `both` | Graph: `both` (10–90 % and 25–75 %), `iqr` (25–75 %), `wide` (10–90 %), `minmax`, `none` |
 | `cumulative` | `false` | Graph, counters only: consumption since midnight |
+| `hide_subtitle` | `false` | Hide the line below the title (period, days with data, resolution hints) |
 | `hide_legend` | `false` | Hide the legend (graph: series, heatmap: color scale), as in the native statistics graph card |
 | `color` | state color | Color of today's line or of the heatmap: hex, CSS or a theme color name such as `amber` |
 | `colors` | – | Heatmap: list of two or more colors from low to high, e.g. `["#e3f2fd", "#0d47a1"]` |

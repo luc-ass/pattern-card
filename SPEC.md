@@ -25,6 +25,7 @@ compare: none               # none | weekday_weekend (ab 0.2.0)
 reference: auto             # nur graph ohne compare: auto (Tage derselben Art wie heute) | all
 difference: true            # nur heatmap mit compare: Differenzzeile Wochenende − Werktage
 band: both                  # both (10–90 % und 25–75 %) | iqr | wide (10–90 %) | minmax | none
+hide_subtitle: false        # ab 0.5.0: Untertitel (Zeitraum, Tage mit Daten, Hinweise) ausblenden; ohne Titel entfällt der Kopf ganz
 hide_legend: false          # ab 0.4.0: Legende ausblenden (Graph: Serien, Heatmap: Farbskala), Name wie bei statistics-graph
 cumulative: false           # nur Zähler: kumuliert ab Mitternacht
 # nur heatmap

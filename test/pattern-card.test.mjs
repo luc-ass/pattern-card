@@ -295,6 +295,17 @@ test("Karte heatmap: Bewegungsmelder aus dem Verlauf", async () => {
   const root = el.shadowRoot;
   assert.equal(root.querySelector(".title").textContent, "Bewegung Gäste-WC");
   assert.match(root.querySelector(".sub").textContent, /14 Tage/);
+  el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14, hide_subtitle: true });
+  await flush();
+  assert.equal(root.querySelector(".sub").hidden, true);
+  assert.equal(root.querySelector(".sub").textContent, "");
+  assert.equal(root.querySelector(".title").textContent, "Bewegung Gäste-WC");
+  assert.equal(root.querySelector(".card-header").hidden, false);
+  el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14, hide_subtitle: true, name: false });
+  await flush();
+  assert.equal(root.querySelector(".card-header").hidden, true);
+  el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14 });
+  await flush();
   const cells = root.querySelectorAll(".cell");
   assert.equal(cells.length, 7 * 24);
   assert.ok([...cells].some((c) => /rgba/.test(c.getAttribute("style") || "")), "Zellen eingefärbt");
@@ -520,6 +531,7 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.ok(!names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("difference"));
   assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_legend"));
   assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("hide_legend"));
+  assert.ok(names(P.editorSchema({ mode: "graph" }, "measurement", t)).includes("hide_subtitle"));
 
   const ed = w.document.createElement("pattern-card-editor");
   const { hass } = makeHass({ "binary_sensor.m": { entity_id: "binary_sensor.m", state: "off", attributes: {} } }, () => []);
