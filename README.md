@@ -111,7 +111,7 @@ All options can also be set in the visual editor.
 | --- | --- | --- |
 | `entity` | – | Entity to analyse (required) |
 | `mode` | `graph` | `graph` or `heatmap` |
-| `name` | friendly name | Card title; `false` hides it |
+| `name` | friendly name | Card title; `false` or a single space hides it (in the visual editor, enter a space) |
 | `days` | `28` | Completed days before today used for the reference and the heatmap |
 | `weekdays` | all | Only use these weekdays (`mon` … `sun`) |
 | `statistic` | by type | `active` or `events` for states, `mean` for measurements, `sum` for counters |

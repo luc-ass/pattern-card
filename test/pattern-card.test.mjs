@@ -304,6 +304,9 @@ test("Karte heatmap: Bewegungsmelder aus dem Verlauf", async () => {
   el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14, hide_subtitle: true, name: false });
   await flush();
   assert.equal(root.querySelector(".card-header").hidden, true);
+  el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14, hide_subtitle: true, name: " " });
+  await flush();
+  assert.equal(root.querySelector(".card-header").hidden, true);
   el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 14 });
   await flush();
   const cells = root.querySelectorAll(".cell");

@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.5.0";
+const CARD_VERSION = "0.5.1";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -1381,8 +1381,9 @@ class PatternCard extends HTMLElement {
 
   _title() {
     const cfg = this._config;
-    if (cfg.name === false || cfg.name === "") return "";
-    if (typeof cfg.name === "string") return cfg.name;
+    // false oder nur Leerzeichen: kein Titel (im Editor lässt sich das Feld nicht leeren)
+    if (cfg.name === false) return "";
+    if (typeof cfg.name === "string") return cfg.name.trim();
     const st = this._hass?.states?.[cfg.entity];
     return st?.attributes?.friendly_name || cfg.entity;
   }
