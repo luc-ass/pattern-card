@@ -24,7 +24,7 @@ resolution: auto            # auto | 5min | 15min | 30min | hour
 compare: none               # none | weekday_weekend (ab 0.2.0)
 reference: auto             # nur graph ohne compare: auto (Tage derselben Art wie heute) | all
 difference: true            # nur heatmap mit compare: Differenzzeile Wochenende − Werktage
-band: iqr                   # iqr (25–75 %) | minmax | none
+band: both                  # both (10–90 % und 25–75 %) | iqr | wide (10–90 %) | minmax | none
 cumulative: false           # nur Zähler: kumuliert ab Mitternacht
 # nur heatmap
 color: "#ff9800"            # eine Farbe: Skala von transparent bis zur Farbe
@@ -69,7 +69,7 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 
 - Gezeichnet wird mit **`ha-chart-base`**, der ECharts-Komponente von HA, wie bei `statistics-graph`. Die x-Achse ist eine Zeitachse über den heutigen Tag von 0:00 bis 24:00, so formatiert HA die Uhrzeiten selbst.
 - Serien:
-  1. **Band**: gestapelte Flächen (unterer Rand transparent, Spanne gefüllt) in Referenzfarbe mit geringer Deckkraft. `iqr` = 25.–75. Perzentil. Bei weniger als 4 Referenztagen weicht das Band auf `minmax` aus, mit Hinweis im Tooltip.
+  1. **Bänder**: gestapelte Flächen (unterer Rand transparent, Spanne gefüllt) in Referenzfarbe mit geringer Deckkraft, seit 0.3.0 zwei ineinander (siehe „Zwei Bänder“). Bei weniger als 4 Referenztagen nur `minmax`.
   2. **Referenz-Mittel**: gestrichelte Linie in Referenzfarbe.
   3. **Heute**: kräftige Linie in `--graph-color-1` oder der Zustandsfarbe, endet bei „jetzt“.
 - **Zustände**: Die Referenz zeigt den Anteil aktiv je Slot (0–100 %). Heute erscheint als Stufenfläche 0/100 % (aktiv ja/nein), beim Modus `events` als Balken mit der Zahl der Ereignisse je Slot.
@@ -115,6 +115,15 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 - **Repo `luc-ass/pattern-card`**, HACS (`hacs.json`, `content_in_root`). README auf Englisch, die Projekt-Doku auf Deutsch.
 - **Installation an deiner Instanz** erst nach OK (Datei unter `/config/www/`, Ressource, Testdashboard), mit Eintrag im `CHANGELOG.md` von ha-organisation.
 - **Testdaten**: Strom `sensor.flur_kg_stromzahler_netz_leistung` (Messwert), `sensor.flur_kg_stromzahler_netz_import` (Zähler), Gäste-WC `binary_sensor.bewegung_eg_gaste_wc` und `light.licht_eg_gaste_wc` (Zustände, Verlauf erst ab 09.11.2026).
+
+## Zwei Bänder (0.3.0)
+
+Entschieden mit Lucas am 2026-11-12: zwei ineinanderliegende Perzentil-Bänder statt Standardabweichung. ±2σ setzt eine Normalverteilung voraus. Strom (schief, durch PV negativ) und Belegung (meist 0 %, nach oben offen) sind das nicht, das Band liefe unter 0 bzw. über 100 %, und bei wenigen Tagen bläht ein Ausreißer σ auf. Eine Option `sigma` gibt es bewusst nicht.
+
+- **`band: both`** (Standard): außen blass 10–90 % (Deckkraft 0,10, „Normalbereich“), innen kräftiger 25–75 % (0,18). Die Flächen überlagern sich, innen wirkt dadurch dunkler. In Legende und Tooltip steht das innere Band zuerst
+- **`wide`**: nur 10–90 %. **`iqr`**: nur 25–75 % (Standard bis 0.2.0). **`minmax`** und **`none`** wie bisher
+- **Wenige Tage**: Unter 10 Tagen mit Daten entfällt 10–90 % (die Werte lägen nahe an Min und Max und schwankten stark), der Tooltip nennt „Spanne 10–90 % ab 10 Tagen“. Unter 4 Tagen gibt es nur Min–Max
+- **Vergleich** (`compare`): `both` zeigt je Referenz nur 25–75 %, sonst überlagern sich vier Flächen. Wer `wide` ausdrücklich setzt, bekommt je Referenz 10–90 %
 
 ## Vergleich Werktage/Wochenende (0.2.0)
 

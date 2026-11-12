@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.2.0";
+const CARD_VERSION = "0.3.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -32,6 +32,8 @@ const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const RESOLUTIONS = { "5min": 5, "15min": 15, "30min": 30, hour: 60 };
 const DEFAULT_DAYS = 28;
 const MIN_DAYS_IQR = 4;
+const MIN_DAYS_WIDE = 10; // darunter schwanken 10 %/90 % stark und liegen nahe Min/Max
+const BAND_MODES = ["both", "iqr", "wide", "minmax", "none"];
 const TODAY_REFRESH_MS = 5 * MIN_MS;
 const STATE_REFRESH_THROTTLE_MS = 30 * 1000;
 const REF_SETTLE_MS = 15 * MIN_MS; // Stundenstatistik des Vortags ist erst nach Mitternacht vollständig
@@ -67,8 +69,11 @@ const I18N = {
     today: "Today",
     ref_reference: "Reference (avg)",
     band_iqr: "Range 25–75 %",
+    band_wide: "Range 10–90 %",
+    band_both: "Ranges 25–75 % and 10–90 %",
     band_minmax: "Range min–max",
     band_none: "No band",
+    wide_needs_days: "10–90 % range from {n} days on",
     days_n: "{n} days",
     days_of: "data from {n} of {total} days",
     avg_of_days: "avg of {n} days",
@@ -128,8 +133,11 @@ const I18N = {
     today: "Heute",
     ref_reference: "Referenz (Ø)",
     band_iqr: "Spanne 25–75 %",
+    band_wide: "Spanne 10–90 %",
+    band_both: "Spannen 25–75 % und 10–90 %",
     band_minmax: "Spanne Min–Max",
     band_none: "Kein Band",
+    wide_needs_days: "Spanne 10–90 % ab {n} Tagen",
     days_n: "{n} Tage",
     days_of: "Daten aus {n} von {total} Tagen",
     avg_of_days: "Ø aus {n} Tagen",
@@ -554,10 +562,12 @@ const slotStats = (arrays, S) => {
         mean: vals.reduce((s, x) => s + x, 0) / n,
         min: vals[0],
         max: vals[n - 1],
+        p10: quantile(vals, 0.1),
         p25: quantile(vals, 0.25),
         p75: quantile(vals, 0.75),
+        p90: quantile(vals, 0.9),
       }
-      : { n: 0, mean: null, min: null, max: null, p25: null, p75: null });
+      : { n: 0, mean: null, min: null, max: null, p10: null, p25: null, p75: null, p90: null });
   }
   return out;
 };
@@ -755,6 +765,23 @@ const withUnit = (text, unit) => {
  * ------------------------------------------------------------------------ */
 
 /**
+ * Bänder einer Referenz, von außen nach innen.
+ * both: 10–90 % und 25–75 %; im Vergleich (zwei Referenzen) nur 25–75 %, sonst überlagern sich vier Flächen.
+ * Unter MIN_DAYS_WIDE Tagen entfällt 10–90 %, unter MIN_DAYS_IQR gibt es nur Min–Max.
+ */
+const bandsFor = (mode = "both", n, multi) => {
+  const IQR = { key: "iqr", lo: "p25", hi: "p75", opacity: 0.18 };
+  const WIDE = { key: "wide", lo: "p10", hi: "p90", opacity: 0.1 };
+  const MINMAX = { key: "minmax", lo: "min", hi: "max", opacity: 0.18 };
+  if (mode === "none") return { bands: [], wideDropped: false };
+  if (mode === "minmax" || n < MIN_DAYS_IQR) return { bands: [MINMAX], wideDropped: false };
+  if (mode === "iqr" || (mode === "both" && multi)) return { bands: [IQR], wideDropped: false };
+  const wideOk = n >= MIN_DAYS_WIDE;
+  if (mode === "wide") return { bands: [wideOk ? WIDE : IQR], wideDropped: !wideOk };
+  return { bands: wideOk ? [WIDE, IQR] : [IQR], wideDropped: !wideOk };
+};
+
+/**
  * Baut data/options für ha-chart-base.
  * ctx: { colors: {today, refs: {key: color}}, label: {today, refs: {key}, bandName(ref, mode), daysN},
  *        fmtNumber, fmtTime, unit, band, cumulative }
@@ -776,33 +803,35 @@ const buildGraph = (model, ctx) => {
   const legendData = [{ id: "today", name: ctx.label.today }];
 
   const refs = references.map((ref) => {
-    const bandMode = ctx.band === "none" ? "none" : ref.daysWithData < MIN_DAYS_IQR || ctx.band === "minmax" ? "minmax" : "iqr";
-    const lowKey = bandMode === "iqr" ? "p25" : "min";
-    const highKey = bandMode === "iqr" ? "p75" : "max";
+    const { bands, wideDropped } = bandsFor(ctx.band, ref.daysWithData, multi);
     const color = ctx.colors.refs[ref.key];
     const name = ctx.label.refs[ref.key];
-    const bandName = ctx.label.bandName(ref, bandMode, multi);
     const pts = (fn) => start.concat(ref.stats.map((r, k) => [xOf(k), fn(r, k)]));
-    if (bandMode !== "none") {
+    // äußeres Band zuerst, das innere liegt darüber und wirkt durch die Überlagerung kräftiger
+    const shown = bands.map((band) => {
+      const id = `band-${ref.key}-${band.key}`;
+      const bandName = ctx.label.bandName(ref, band.key, multi);
       series.push({
-        id: `band-low-${ref.key}`, name: "", type: "line", data: pts((r) => r[lowKey]),
-        stack: `band-${ref.key}`, stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
+        id: `band-low-${ref.key}-${band.key}`, name: "", type: "line", data: pts((r) => r[band.lo]),
+        stack: id, stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
         lineStyle: { width: 0 }, silent: true, z: 1, color,
       });
       series.push({
-        id: `band-${ref.key}`, name: bandName, type: "line",
-        data: pts((r) => (r[lowKey] == null ? null : r[highKey] - r[lowKey])),
-        stack: `band-${ref.key}`, stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
-        lineStyle: { width: 0 }, areaStyle: { color, opacity: multi ? 0.12 : 0.18 }, silent: true, z: 1, color,
+        id, name: bandName, type: "line",
+        data: pts((r) => (r[band.lo] == null ? null : r[band.hi] - r[band.lo])),
+        stack: id, stackStrategy: "all", stackOrder: "seriesAsc", symbol: "none",
+        lineStyle: { width: 0 }, areaStyle: { color, opacity: multi ? 0.12 : band.opacity }, silent: true, z: 1, color,
       });
-    }
+      return { ...band, id, bandName };
+    });
     series.push({
       id: `ref-${ref.key}`, name, type: "line", data: pts((r) => r.mean), symbol: "none",
       lineStyle: { width: 1.5, type: "dashed", color }, color, z: 2,
     });
     legendData.push({ id: `ref-${ref.key}`, name });
-    if (bandMode !== "none") legendData.push({ id: `band-${ref.key}`, name: bandName });
-    return { ref, bandMode, lowKey, highKey, color, name, bandName };
+    // in der Legende das innere Band vor dem äußeren
+    for (const band of [...shown].reverse()) legendData.push({ id: band.id, name: band.bandName });
+    return { ref, bands: shown, wideDropped, color, name };
   });
 
   const todayData = start.concat(todayVals.map((v, k) => [xOf(k), v]));
@@ -845,13 +874,14 @@ const buildGraph = (model, ctx) => {
       const st = r.ref.stats[k];
       const days = multi ? ` <span style="color:var(--secondary-text-color)">(${escapeHtml(ctx.label.daysShort(st.n))})</span>` : "";
       rows += `<br>${marker(r.color)}${escapeHtml(r.name)}: <span dir="ltr">${v(st.mean)}</span>${days}`;
-      if (r.bandMode !== "none" && st[r.lowKey] != null) {
-        rows += `<br><span class="pc-indent"></span>${escapeHtml(r.bandName)}: <span dir="ltr">${escapeHtml(ctx.fmtNumber(st[r.lowKey]))} – ${v(st[r.highKey])}</span>`;
+      for (const band of [...r.bands].reverse()) {
+        if (st[band.lo] == null) continue;
+        rows += `<br><span class="pc-indent"></span>${escapeHtml(band.bandName)}: <span dir="ltr">${escapeHtml(ctx.fmtNumber(st[band.lo]))} – ${v(st[band.hi])}</span>`;
       }
     }
-    if (!multi && refs[0]) {
-      rows += `<br><span style="color:var(--secondary-text-color)">${escapeHtml(ctx.label.daysN(refs[0].ref.stats[k].n))}</span>`;
-    }
+    const muted = (t) => `<br><span style="color:var(--secondary-text-color)">${escapeHtml(t)}</span>`;
+    if (!multi && refs[0]) rows += muted(ctx.label.daysN(refs[0].ref.stats[k].n));
+    if (refs.some((r) => r.wideDropped)) rows += muted(ctx.label.wideNeedsDays(MIN_DAYS_WIDE));
     el.innerHTML = rows;
     return el;
   };
@@ -1024,6 +1054,7 @@ class PatternCard extends HTMLElement {
     if (config.days !== undefined && !(Number(config.days) >= 1)) throw new Error("days must be at least 1");
     if (config.compare !== undefined && !COMPARE_MODES.includes(config.compare)) throw new Error("compare must be none or weekday_weekend");
     if (config.reference !== undefined && !REFERENCE_MODES.includes(config.reference)) throw new Error("reference must be auto or all");
+    if (config.band !== undefined && !BAND_MODES.includes(config.band)) throw new Error("band must be both, iqr, wide, minmax or none");
     const prev = this._config;
     this._config = { mode: "graph", ...config };
     const changed = !prev || JSON.stringify(prev) !== JSON.stringify(this._config);
@@ -1390,16 +1421,17 @@ class PatternCard extends HTMLElement {
     const { data, options } = buildGraph(m, {
       colors: this._colors(),
       unit,
-      band: this._config.band || "iqr",
+      band: this._config.band || "both",
       cumulative,
       fmtNumber: this._fmt(),
       fmtTime: timeFormatter(this._hass, m.tz),
       label: {
         today: this._t("today"),
         refs: { reference: this._t("ref_reference"), workday: this._t("ref_workday"), weekend: this._t("ref_weekend") },
-        bandName: (ref, mode, multi) => (multi
+        bandName: (ref, key, multi) => (multi
           ? this._t("band_group", { group: this._t(`group_${ref.key}`) })
-          : this._t(mode === "iqr" ? "band_iqr" : "band_minmax")),
+          : this._t(`band_${key}`)),
+        wideNeedsDays: (n) => this._t("wide_needs_days", { n }),
         daysN: (n) => this._t("avg_of_days", { n }),
         daysShort: (n) => this._t("days_short", { n }),
       },
@@ -1624,7 +1656,7 @@ const editorSchema = (cfg, kind, t) => {
     schema.push({
       name: "band",
       selector: {
-        select: { mode: "dropdown", options: ["iqr", "minmax", "none"].map((v) => ({ value: v, label: t(`band_${v}`) })) },
+        select: { mode: "dropdown", options: BAND_MODES.map((v) => ({ value: v, label: t(`band_${v}`) })) },
       },
     });
     if (kind === "counter") schema.push({ name: "cumulative", selector: { boolean: {} } });
@@ -1680,7 +1712,7 @@ class PatternCardEditor extends HTMLElement {
       mode: "graph",
       days: DEFAULT_DAYS,
       resolution: "auto",
-      band: "iqr",
+      band: "both",
       compare: "none",
       reference: "auto",
       difference: true,
@@ -1703,7 +1735,7 @@ class PatternCardEditor extends HTMLElement {
     if (Array.isArray(v.weekdays) && WEEKDAYS.every((w) => v.weekdays.includes(w))) delete v.weekdays;
     if (Array.isArray(v.weekdays)) v.weekdays = WEEKDAYS.filter((w) => v.weekdays.includes(w));
     if (v.resolution === "auto") delete v.resolution;
-    if (v.band === "iqr") delete v.band;
+    if (v.band === "both") delete v.band;
     if (v.cumulative === false) delete v.cumulative;
     const kind = guessKind(this._hass.states[v.entity]);
     if (v.statistic === (STATISTICS_BY_KIND[kind] || [])[0] || !(STATISTICS_BY_KIND[kind] || []).includes(v.statistic)) delete v.statistic;
@@ -1731,5 +1763,5 @@ window.__patternCard = {
   WEEKDAYS, I18N, translate, stateActive, detectKind, guessKind, resolveStatistic, timeZoneOf, selectedWeekdays,
   tzOffset, wallToTs, ymdAdd, weekdayOf, buildDays, forEachOverlap, accumulateStats, accumulateHistory,
   dayValues, cumulate, quantile, slotStats, computeModel, cssColor, defaultColor, parseRgb, interpolateStops,
-  makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND,
+  makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND, bandsFor,
 };

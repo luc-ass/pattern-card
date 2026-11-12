@@ -2,7 +2,7 @@
 
 A Home Assistant Lovelace card that shows **patterns** of a single entity over a configurable period:
 
-- **Graph**: today's curve against a reference period (mean line plus 25–75 % band), by time of day
+- **Graph**: today's curve against a reference period (mean line plus 25–75 % and 10–90 % bands), by time of day
 - **Heatmap**: weekday × time of day, showing share of time active, number of events, mean or consumption
 
 It is meant to look and behave like a native card: the graph uses Home Assistant's own chart component (`ha-chart-base`), theme colors and number/time formats follow your profile, and the data comes from long-term statistics where available, otherwise from history.
@@ -60,7 +60,7 @@ days: 56
 | `compare` | `none` | `weekday_weekend`: graph shows workdays and weekend as two references; heatmap shows two rows (Mon–Fri, Sat–Sun) plus a difference row |
 | `reference` | `auto` | Graph without `compare`: `auto` compares today with days of the same kind (workdays or weekend), `all` with every day. Ignored when `weekdays` is set |
 | `difference` | `true` | Heatmap with `compare`: show the difference row (weekend − workdays) |
-| `band` | `iqr` | Graph only: `iqr` (25–75 %), `minmax`, `none` |
+| `band` | `both` | Graph only: `both` (10–90 % and 25–75 % nested), `iqr` (25–75 %), `wide` (10–90 %), `minmax`, `none`. 10–90 % needs at least 10 days of data; with `compare`, `both` shows 25–75 % only |
 | `cumulative` | `false` | Graph, counters only: consumption since midnight |
 | `color` | state color | Today's line / heatmap color (hex, CSS or theme color name) |
 | `colors` | – | Heatmap only: list of two or more colors, low → high |

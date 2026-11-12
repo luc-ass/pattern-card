@@ -122,7 +122,12 @@ test("quantile und slotStats", () => {
   assert.equal(P.quantile([1, 2, 3, 4, 5], 0.25), 2);
   assert.equal(P.quantile([1, 2], 0.5), 1.5);
   const st = P.slotStats([[1, null], [3, null], [2, 5]], 2);
-  assert.deepEqual({ ...st[0] }, { n: 3, mean: 2, min: 1, max: 3, p25: 1.5, p75: 2.5 });
+  const r0 = { ...st[0] };
+  near(r0.p10, 1.2, 1e-9);
+  near(r0.p90, 2.8, 1e-9);
+  delete r0.p10;
+  delete r0.p90;
+  assert.deepEqual(r0, { n: 3, mean: 2, min: 1, max: 3, p25: 1.5, p75: 2.5 });
   assert.equal(st[1].n, 1);
 });
 
@@ -166,6 +171,39 @@ test("computeModel heatmap: nur gewählte Wochentage, heute nur abgeschlossene S
   assert.equal(thu.cells[12].n, 2); // heute 12–13 Uhr noch offen
   assert.equal(thu.cells[12].value, 100);
   assert.equal(m.rows.find((r) => r.weekday === 0).cells[5].value, 0);
+});
+
+
+test("bandsFor: beide Bänder, Rückfall bei wenigen Tagen, Vergleich nur innen", () => {
+  const keys = (r) => [...r.bands].map((b) => b.key).join(",") + (r.wideDropped ? " (ohne 10–90)" : "");
+  assert.equal(keys(P.bandsFor(undefined, 20, false)), "wide,iqr");
+  assert.equal(keys(P.bandsFor("both", 8, false)), "iqr (ohne 10–90)");
+  assert.equal(keys(P.bandsFor("both", 3, false)), "minmax");
+  assert.equal(keys(P.bandsFor("both", 20, true)), "iqr");
+  assert.equal(keys(P.bandsFor("wide", 20, true)), "wide");
+  assert.equal(keys(P.bandsFor("wide", 6, false)), "iqr (ohne 10–90)");
+  assert.equal(keys(P.bandsFor("iqr", 20, false)), "iqr");
+  assert.equal(keys(P.bandsFor("none", 20, false)), "");
+});
+
+test("buildGraph: zwei Bänder ab 10 Tagen, Legende innen vor außen", () => {
+  const now = P.wallToTs(2026, 11, 12, 12, 0, TZ);
+  const days = filledDays(now, 14, (d, k) => 100 + d.ymd.d + k);
+  const m = P.computeModel(days, { statistic: "mean", now, mode: "graph", groups: [{ key: "reference", weekdays: new Set([0, 1, 2, 3, 4, 5, 6]) }] });
+  const g = P.buildGraph(m, {
+    colors: { today: "#00f", refs: { reference: "#888" } },
+    label: { today: "Heute", refs: { reference: "Referenz (Ø)" }, bandName: (r, key) => key, daysN: (n) => `${n}`, daysShort: (n) => `${n}`, wideNeedsDays: (n) => `ab ${n}` },
+    fmtNumber: (x) => String(Math.round(x)), fmtTime: () => "t", unit: "W",
+  });
+  assert.deepEqual([...g.data].map((x) => x.id), ["band-low-reference-wide", "band-reference-wide", "band-low-reference-iqr", "band-reference-iqr", "ref-reference", "today"]);
+  assert.deepEqual([...g.options.legend.data].map((x) => x.name), ["Heute", "Referenz (Ø)", "iqr", "wide"]);
+  const wide = g.data.find((x) => x.id === "band-reference-wide");
+  const iqr = g.data.find((x) => x.id === "band-reference-iqr");
+  assert.ok(wide.areaStyle.opacity < iqr.areaStyle.opacity);
+  const ref = g.data.find((x) => x.id === "ref-reference").data;
+  const tip = g.options.tooltip.formatter([{ value: ref[5] }]).textContent;
+  assert.ok(tip.indexOf("iqr") < tip.indexOf("wide"), tip);
+  assert.ok(!/ab 10/.test(tip));
 });
 
 /* ---- Typen, Farben ---- */
@@ -280,7 +318,7 @@ test("Karte graph: Messwert aus der Statistik an ha-chart-base, ohne Zoom", asyn
   const chart = el.shadowRoot.querySelector("ha-chart-base");
   assert.ok(chart, "ha-chart-base eingesetzt");
   const ids = [...chart.data].map((s) => s.id);
-  assert.deepEqual(ids, ["band-low-reference", "band-reference", "ref-reference", "today"]);
+  assert.deepEqual(ids, ["band-low-reference-iqr", "band-reference-iqr", "ref-reference", "today"]);
   assert.ok(Array.isArray(chart.options.dataZoom) && chart.options.dataZoom.length === 0);
   assert.equal(chart.zoomSlider, "never");
   assert.equal(chart.options.xAxis[0].type, "time");
@@ -296,6 +334,7 @@ test("Karte graph: Messwert aus der Statistik an ha-chart-base, ohne Zoom", asyn
   const tipEl = chart.options.tooltip.formatter([{ value: ref[4] }]);
   assert.match(tipEl.textContent, /01:00 – 01:15/);
   assert.match(tipEl.textContent, /Referenz \(Ø\): 510 W/);
+  assert.match(tipEl.textContent, /Spanne 10–90 % ab 10 Tagen/);
   el.remove();
 });
 
@@ -338,6 +377,7 @@ test("setConfig prüft Eingaben", () => {
   assert.throws(() => el.setConfig({ entity: "sensor.x", resolution: "7min" }), /resolution/);
   assert.throws(() => el.setConfig({ entity: "sensor.x", compare: "month" }), /compare/);
   assert.throws(() => el.setConfig({ entity: "sensor.x", reference: "same" }), /reference/);
+  assert.throws(() => el.setConfig({ entity: "sensor.x", band: "sigma" }), /band/);
 });
 
 
@@ -399,7 +439,7 @@ test("Karte graph: Vergleich mit zwei Referenzen und eigenen Farben", async () =
   await flush(20);
   const chart = el.shadowRoot.querySelector("ha-chart-base");
   const ids = [...chart.data].map((s) => s.id);
-  assert.deepEqual(ids, ["band-low-workday", "band-workday", "ref-workday", "band-low-weekend", "band-weekend", "ref-weekend", "today"]);
+  assert.deepEqual(ids, ["band-low-workday-iqr", "band-workday-iqr", "ref-workday", "band-low-weekend-iqr", "band-weekend-iqr", "ref-weekend", "today"]);
   const legend = [...chart.options.legend.data].map((x) => x.name);
   assert.deepEqual(legend, ["Heute", "Werktage (Ø)", "Spanne Werktage", "Wochenende (Ø)", "Spanne Wochenende"]);
   const ref = chart.data.find((s) => s.id === "ref-workday").data;

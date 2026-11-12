@@ -47,3 +47,6 @@ Leitlinie: so nativ wie möglich in Funktion und Aussehen (HA-Frontend als Refer
 ### Nachtrag 2026-11-12: Vergleich Werktage/Wochenende (0.2.0)
 - Gewünscht: Ideen 1–4. Graph mit zwei Referenzen (Werktage, Wochenende), Referenz standardmäßig wie heute (Werktag oder Wochenende), Heatmap mit zwei Zeilen und Differenzzeile
 - Feiertage (Workday-Integration) und eigene Gruppen erst später
+
+### Nachtrag 2026-11-12: Bänder (0.3.0)
+- Frage: zwei Standardabweichungen? Entscheidung: nein, stattdessen zwei Perzentil-Bänder (25–75 % innen, 10–90 % außen), ohne Option `sigma`
