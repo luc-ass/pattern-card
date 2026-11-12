@@ -116,6 +116,8 @@ since: "2026-11-12"
 
 Did a new pump setting reduce how often the boiler starts? The heatmap shows the days before and from the given date on, plus a difference row (after − before). In graph mode both periods appear as two references.
 
+![Heatmap comparing boiler starts before and after a change](docs/images/heatmap-before-after.png)
+
 ## Options
 
 All options can also be set in the visual editor.

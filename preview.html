@@ -2063,6 +2063,19 @@ const power = (t) => {
   return 180 + peak((we ? 9.5 : 7) + s1, 0.8, 600 * a) + peak(12.5 + s2, 1, (we ? 900 : 300) * (0.5 + rnd(d * 5.3))) + peak(19 + s1 / 2, 1.5, 1100 * a) + rnd(Math.floor(t / 300e3)) * 250;
 };
 // Bewegung Gäste-WC: kurze Besuche, häufiger morgens und abends
+// Therme: vor dem Stichtag häufige kurze Starts, danach seltener (für vorher/nachher)
+const SINCE = (() => { const d = new Date(Date.now() - 10 * 864e5); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+const sinceTs = new Date(`${SINCE}T00:00:00`).getTime();
+const boilerEntries = (start, end) => {
+  const out = [{ s: "off", lu: start / 1000 }];
+  for (let t = Math.ceil(start / 300e3) * 300e3; t < end; t += 300e3) {
+    const h = localHour(t);
+    const demand = 0.35 + 0.25 * Math.cos(((h - 5) / 24) * 2 * Math.PI); // nachts und morgens mehr
+    const p = t < sinceTs ? demand * 0.9 : demand * 0.45;
+    if (rnd(t / 997) < p) out.push({ s: "on", lu: t / 1000 }, { s: "off", lu: Math.min(end, t + 90e3) / 1000 });
+  }
+  return out;
+};
 const motionEntries = (start, end) => {
   const out = [{ s: "off", lu: start / 1000 }];
   for (let t = Math.ceil(start / 600e3) * 600e3; t < end; t += 600e3) {
@@ -2079,6 +2092,7 @@ const motionEntries = (start, end) => {
 const states = {
   "sensor.leistung": { entity_id: "sensor.leistung", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
   "sensor.zaehler": { entity_id: "sensor.zaehler", state: "12345", attributes: { friendly_name: L("Stromzähler", "Grid energy"), unit_of_measurement: "kWh", state_class: "total_increasing", device_class: "energy" } },
+  "binary_sensor.therme": { entity_id: "binary_sensor.therme", state: "off", attributes: { friendly_name: L("Therme Brenner", "Boiler burner"), device_class: "running" } },
   "binary_sensor.bewegung": { entity_id: "binary_sensor.bewegung", state: "off", attributes: { friendly_name: L("Bewegung Gäste-WC", "Guest toilet motion"), device_class: "motion" } },
 };
 
@@ -2107,7 +2121,7 @@ const hass = {
       }
       return { [id]: rows };
     }
-    if (msg.type === "history/history_during_period") return { [id]: motionEntries(s, e) };
+    if (msg.type === "history/history_during_period") return { [id]: id === "binary_sensor.therme" ? boilerEntries(s, e) : motionEntries(s, e) };
     return null;
   },
 };
@@ -2122,6 +2136,7 @@ const configs = [
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "graph", days: 28 },
   { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: L("Werktage gegen Wochenende", "Workdays vs. weekend") },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: L("Belegung Werktage/Wochenende", "Occupancy: workdays vs. weekend") },
+  { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
 ];
 
 const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");
