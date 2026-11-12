@@ -123,6 +123,11 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 - **Installation an deiner Instanz** erst nach OK (Datei unter `/config/www/`, Ressource, Testdashboard), mit Eintrag im `CHANGELOG.md` von ha-organisation.
 - **Testdaten**: Strom `sensor.flur_kg_stromzahler_netz_leistung` (Messwert), `sensor.flur_kg_stromzahler_netz_import` (Zähler), Gäste-WC `binary_sensor.bewegung_eg_gaste_wc` und `light.licht_eg_gaste_wc` (Zustände, Verlauf erst ab 09.11.2026).
 
+## Pfeil zum Verlauf (0.7.3)
+
+- Wie `hui-history-graph-card` und `hui-statistics-graph-card`: rechts im Titel ein `ha-icon-next` als Link auf `/history?entity_id=…&back=1&start_date=…`, Beginn des ausgewerteten Zeitraums. Beschriftung `panel.history` aus HA
+- Nur mit Titel, wie nativ. Kein Detail-Dialog beim Klick auf den Titel, das machen die nativen Graph-Karten auch nicht
+
 ## Zwei Bänder (0.3.0)
 
 Entschieden mit Lucas am 2026-11-12: zwei ineinanderliegende Perzentil-Bänder statt Standardabweichung. ±2σ setzt eine Normalverteilung voraus. Strom (schief, durch PV negativ) und Belegung (meist 0 %, nach oben offen) sind das nicht, das Band liefe unter 0 bzw. über 100 %, und bei wenigen Tagen bläht ein Ausreißer σ auf. Eine Option `sigma` gibt es bewusst nicht.
