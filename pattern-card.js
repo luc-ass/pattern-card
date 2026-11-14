@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.9.0";
+const CARD_VERSION = "0.9.1";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -1295,6 +1295,9 @@ const STYLE = `
     border-radius: var(--pattern-card-cell-radius, 3px); background: var(--secondary-background-color);
   }
   .legend .reg-text { margin-inline-end: auto; }
+  /* mit Regelmäßigkeit wird die Legende länger: ganze Einträge umbrechen statt einzelner Wörter */
+  .legend.has-reg { flex-wrap: wrap; row-gap: 4px; }
+  .legend.has-reg > span { white-space: nowrap; }
   .tooltip .marker.regular { border-radius: 3px; }
   .cell.diff, .wd.diff { margin-top: 6px; }
   .legend + .legend { margin-top: 4px; }
@@ -1952,7 +1955,7 @@ class PatternCard extends HTMLElement {
     const regLegend = rc
       ? `<span class="regular"></span><span class="reg-text">${escapeHtml(this._t("regularity_legend", { threshold: fmt0(rc.threshold) }))}</span>`
       : "";
-    let legend = `<div class="legend">${regLegend}<span dir="ltr">${escapeHtml(withUnit(fmt(lo), unit))}</span><span class="bar" style="background:${gradient}"></span><span dir="ltr">${escapeHtml(withUnit(fmt(hi), unit))}</span></div>`;
+    let legend = `<div class="legend${rc ? " has-reg" : ""}">${regLegend}<span dir="ltr">${escapeHtml(withUnit(fmt(lo), unit))}</span><span class="bar" style="background:${gradient}"></span><span dir="ltr">${escapeHtml(withUnit(fmt(hi), unit))}</span></div>`;
     if (diff) {
       const dg = `linear-gradient(to right, ${rgbaString([neg[0], neg[1], neg[2], 1])}, ${rgbaString([neg[0], neg[1], neg[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 1])})`;
       legend += `<div class="legend"><span>${escapeHtml(diffTexts.neg)}</span><span dir="ltr">${escapeHtml(withUnit(signed(-diffMax), unit))}</span><span class="bar" style="background:${dg}"></span><span dir="ltr">${escapeHtml(withUnit(signed(diffMax), unit))}</span><span>${escapeHtml(diffTexts.pos)}</span></div>`;
