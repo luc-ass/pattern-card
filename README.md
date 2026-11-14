@@ -182,7 +182,7 @@ All options can also be set in the visual editor.
 | `regularity.enabled` | `true` | `false` turns the border off but keeps the settings |
 | `regularity.threshold` | `70` | Minimum share of days (%) with at least one event (`events`) or with active time (`active`) in the slot. Several events on the same day count once |
 | `regularity.min_samples` | `4` | Minimum number of days with data in the slot; below it there is no border, as one event on one day would be 100 % |
-| `regularity.color` | primary text, 60 % | Border color: hex, CSS or a theme color name such as `amber` |
+| `regularity.color` | heatmap color, full strength | Border color: hex, CSS or a theme color name such as `amber`. A thin line in the card background color separates the border from the fill |
 
 ## How it works
 

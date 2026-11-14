@@ -23,6 +23,17 @@ const flush = async (n = 10) => { for (let i = 0; i < n; i++) await settle(); };
 
 /* ---- Zeitraster ---- */
 
+test("withUnit: Einzahl bei genau einem Ereignis", () => {
+  assert.equal(P.withUnit("1", "Ereignisse", "Ereignis"), "1 Ereignis");
+  assert.equal(P.withUnit("+1", "Ereignisse", "Ereignis"), "+1 Ereignis");
+  assert.equal(P.withUnit("\u22121", "Ereignisse", "Ereignis"), "\u22121 Ereignis");
+  assert.equal(P.withUnit("0", "Ereignisse", "Ereignis"), "0 Ereignisse");
+  assert.equal(P.withUnit("1,5", "Ereignisse", "Ereignis"), "1,5 Ereignisse");
+  assert.equal(P.withUnit("11", "Ereignisse", "Ereignis"), "11 Ereignisse");
+  assert.equal(P.withUnit("1", "kWh"), "1 kWh");
+  assert.equal(P.withUnit("1", "%"), "1 %");
+});
+
 test("wallToTs: Berlin Winter- und Sommerzeit", () => {
   assert.equal(P.wallToTs(2026, 1, 15, 0, 0, TZ), Date.UTC(2026, 0, 14, 23, 0));
   assert.equal(P.wallToTs(2026, 7, 15, 12, 30, TZ), Date.UTC(2026, 6, 15, 10, 30));
