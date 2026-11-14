@@ -59,3 +59,13 @@ Leitlinie: so nativ wie möglich in Funktion und Aussehen (HA-Frontend als Refer
 ### Nachtrag 2026-11-14: Regelmäßigkeit (0.9.0)
 - Konzept von Lucas („Regelmäßigkeit von Ereignissen“), umgesetzt ohne Rückfragen, Abstimmung danach
 - Eigene Entscheidungen zur Prüfung: Option als Objekt `regularity` (wie im Konzept, Kurzform `true`), auch für `active` („irgendwann im Slot aktiv“), gültiger Tag ab halbem Slot mit bekanntem Zustand, Standardfarbe Primärtext mit 60 % Deckkraft, Legendeneintrag links neben der Farbskala, heute mit abgeschlossenen Slots wie die Füllfarbe
+
+### Nachtrag 2026-11-14: Wochentagsgruppen (0.10.0)
+
+Konzept „Produkt-Scope und nächster Entwicklungsauftrag“, Abschnitt 4. Lucas hat die Empfehlungen aus der Analyse übernommen („mit deinen Empfehlungen an 0.10.“):
+
+1. Zeitvergleich und Wochentagsgruppen schließen sich aus: mit `before_after`/`recent` filtert nur Gruppe A, B ist ausgegraut; in YAML ist `weekdays_b` mit `compare` ein Fehler
+2. Vorbelegung ohne Aktivierung: neue Karten starten mit allen Tagen, ein Knopf „Werktage gegen Wochenende“ belegt beide Gruppen, alte Karten mit `weekday_weekend` erscheinen vorbelegt
+3. Heute wird im Graph immer gezeigt, auch wenn es in keiner Gruppe liegt
+4. Der Editor zeichnet die Reihen selbst (Knöpfe im Stil der HA-Chips) in `ha-expansion-panel`, ohne HA-Element `<details>`
+5. YAML: `weekdays` bleibt Gruppe A, neu `weekdays_b` für Gruppe B

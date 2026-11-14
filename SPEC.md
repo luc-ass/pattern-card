@@ -17,16 +17,17 @@ entity: sensor.flur_kg_stromzahler_netz_leistung
 mode: graph                 # graph | heatmap
 name: Strom                 # optional, Standard: Anzeigename der Entity
 days: 28                    # Länge des Referenzzeitraums in Tagen, ohne heute
-weekdays: [mon, tue, wed, thu, fri, sat, sun]   # Standard: alle
+weekdays: [mon, tue, wed, thu, fri, sat, sun]   # Standard: alle; Gruppe A
+weekdays_b: [sat, sun]      # ab 0.10.0: Gruppe B, mit weekdays belegt = Vergleich der beiden Gruppen
 statistic: mean             # active | events | mean | sum, Standard nach Typ (s. u.)
 resolution: auto            # auto | 5min | 15min | 30min | hour
 # nur graph
-compare: none               # none | weekday_weekend (ab 0.2.0) | before_after (ab 0.6.0)
+compare: none               # none | before_after (ab 0.6.0) | recent (ab 0.8.0); weekday_weekend (0.2.0) gilt weiter, der Editor schreibt dafür weekdays/weekdays_b
 since: 2026-11-12           # nur before_after: Stichtag, ab dem Tage als „nachher“ zählen
 compare_colors: [blue, red]  # ab 0.7.0: Farben der beiden Gruppen
 difference_colors: [green, red]  # ab 0.7.0: Differenzzeile weniger/mehr
 reference: auto             # nur graph ohne compare: auto (Tage derselben Art wie heute) | all
-difference: true            # nur heatmap mit compare: Differenzzeile Wochenende − Werktage
+difference: true            # nur heatmap mit Vergleich: Differenzzeile (zweite − erste Gruppe)
 band: both                  # both (10–90 % und 25–75 %) | iqr | wide (10–90 %) | minmax | none
 hide_subtitle: false        # ab 0.5.0: Untertitel (Zeitraum, Tage mit Daten, Hinweise) ausblenden; ohne Titel entfällt der Kopf ganz
 hide_legend: false          # ab 0.4.0: Legende ausblenden (Graph: Serien, Heatmap: Farbskala), Name wie bei statistics-graph
@@ -123,6 +124,20 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 - **Repo `luc-ass/pattern-card`**, HACS (`hacs.json`, `content_in_root`). README auf Englisch, die Projekt-Doku auf Deutsch.
 - **Installation an deiner Instanz** erst nach OK (Datei unter `/config/www/`, Ressource, Testdashboard), mit Eintrag im `CHANGELOG.md` von ha-organisation.
 - **Testdaten**: Strom `sensor.flur_kg_stromzahler_netz_leistung` (Messwert), `sensor.flur_kg_stromzahler_netz_import` (Zähler), Gäste-WC `binary_sensor.bewegung_eg_gaste_wc` und `light.licht_eg_gaste_wc` (Zustände, Verlauf erst ab 09.11.2026).
+
+## Wochentagsgruppen (0.10.0)
+
+Konzept „Produkt-Scope und nächster Entwicklungsauftrag“ (Lucas, 2026-11-14), Abschnitt 4, mit den Empfehlungen aus der Analyse. Eine Auswahl ersetzt aus Nutzersicht Wochentagsfilter und festen Vergleich Werktage/Wochenende.
+
+- **Konfiguration**: `weekdays` ist Gruppe A (Bedeutung unverändert), neu `weekdays_b` Gruppe B. Keine Gruppe: alle Tage, im Graph weiter `reference: auto`. Eine Gruppe: Filter (nur B belegt zählt wie A). Beide: Vergleich der Gruppen. Ein Tag in beiden Gruppen und `weekdays_b` zusammen mit `compare` sind Konfigurationsfehler
+- **Alt**: `compare: weekday_weekend` bleibt gültig und ergibt dieselben Gruppen wie bisher (Mo–Fr und Sa–So, je geschnitten mit `weekdays`). Der Editor zeigt sie als Gruppen und schreibt beim nächsten Ändern `weekdays`/`weekdays_b`
+- **Zeitvergleich**: Mit `before_after` oder `recent` filtert nur Gruppe A die Tage (beide Zeitgruppen), Gruppe B ist im Editor ausgegraut und wird beim Umschalten verworfen. Vier Gruppen gäbe es nicht
+- **Beschriftung**: Genau Mo–Fr gegen Sa–So heißt weiter „Werktage“/„Wochenende“ (bestehende Karten sehen gleich aus). Sonst die Tage selbst: „Mo, Do“, „Di, Mi, Fr“, zusammenhängende als „Mo–Fr“. Legende und Tooltip im Graph „Mo, Do (Ø)“, Zeilen der Heatmap „Mo, Do“, Differenz „Di, Mi, Fr − Mo, Do“ mit „mehr Mo, Do“/„mehr Di, Mi, Fr“. Im Vergleich nennt der Untertitel keine Filterliste
+- **Graph**: eine Gruppe = eine Referenz aus diesen Tagen; zwei = zwei Referenzen wie beim alten Vergleich, Farben `compare_colors`. Heute wird immer gezeigt, auch wenn heute in keiner Gruppe liegt
+- **Heatmap**: eine Gruppe = einzelne Wochentage als Zeilen; zwei = zwei Gruppenzeilen und Differenzzeile, Regelmäßigkeit je Gruppe
+- **Statistik**: Jede Gruppe wird je Tag mit Daten gemittelt (wie bisher), ungleich große Gruppen sind also vergleichbar; Lücken zählen nicht als 0, der Tooltip nennt „Ø aus n Tagen“. Neu: Eine Vergleichsgruppe ohne einen Tag mit Daten bekommt keine Kurve, keine Zeile und keine Differenz (gilt auch für vorher/nachher)
+- **Editor**: Aufklappbarer Abschnitt „Wochentage“ zwischen Zeitraum und Vergleich (`ha-expansion-panel`, ohne HA-Element `<details>`), zugeklappt mit Zusammenfassung („Alle Tage“, „Mo, Do“, „Mo, Do gegen Di, Mi, Fr“). Darin zwei Reihen Mo–So als Knöpfe; ein Tag wechselt beim Antippen die Gruppe, Tage der anderen Gruppe sind gestrichelt. Knöpfe „Werktage gegen Wochenende“ (belegt beide Gruppen) und „Alle Tage“. Vorbelegung ohne Aktivierung: neue Karten starten mit allen Tagen. Das Auswahlfeld heißt „Zeitvergleich“ (Keiner, Vorher/Nachher, Letzte Tage). Zwei `ha-form` mit denselben Daten, der Abschnitt liegt dazwischen
+- **Tooltip auf Touch**: Tippen zeigt, erneutes Tippen auf dieselbe Zelle oder Tippen außerhalb schließt (vorher blieb er stehen)
 
 ## Regelmäßigkeit (0.9.0)
 

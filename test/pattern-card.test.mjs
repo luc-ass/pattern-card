@@ -350,6 +350,35 @@ test("Karte heatmap: Bewegungsmelder aus dem Verlauf", async () => {
   assert.equal(tip.hidden, false);
   assert.match(tip.textContent, /Anteil aktiv: \d+ %/);
   assert.match(tip.textContent, /Ø aus \d+ Tagen/);
+  // Maus verlässt die Heatmap: Tooltip weg
+  const leave = new w.Event("pointerleave");
+  leave.pointerType = "mouse";
+  root.querySelector(".content > .heatmap").dispatchEvent(leave);
+  assert.equal(tip.hidden, true);
+  // Touch: Tippen zeigt, pointerleave (kommt bei Touch vor dem click) lässt ihn stehen,
+  // erneutes Tippen auf dieselbe Zelle und Tippen außerhalb blenden ihn aus
+  const tap = (target, where = target) => {
+    const down = new w.Event("pointerdown", { bubbles: true, composed: true });
+    down.pointerType = "touch";
+    where.dispatchEvent(down);
+    const lv = new w.Event("pointerleave");
+    lv.pointerType = "touch";
+    root.querySelector(".content > .heatmap").dispatchEvent(lv);
+    target.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+  };
+  tap(cell);
+  assert.equal(tip.hidden, false, "Tippen zeigt den Tooltip");
+  tap(cell);
+  assert.equal(tip.hidden, true, "zweites Tippen auf dieselbe Zelle schließt ihn");
+  tap(cell);
+  const other = [...cells].find((c) => c !== cell);
+  tap(other);
+  assert.equal(tip.hidden, false, "andere Zelle: Tooltip wechselt");
+  assert.ok(other.classList.contains("hover") && !cell.classList.contains("hover"));
+  const outside = new w.Event("pointerdown", { bubbles: true, composed: true });
+  outside.pointerType = "touch";
+  w.document.body.dispatchEvent(outside);
+  assert.equal(tip.hidden, true, "Tippen außerhalb schließt ihn");
   el.remove();
 });
 
@@ -824,7 +853,7 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   let out;
   ed.addEventListener("config-changed", (e) => { out = e.detail.config; });
   const form = ed.querySelector("ha-form");
-  assert.deepEqual([...form.data.weekdays], [...P.WEEKDAYS]);
+  assert.equal(form.data.weekdays, undefined); // Wochentage stehen im eigenen Abschnitt
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, weekdays: ["sun", "mon"], statistic: "events" } } }));
   assert.deepEqual([...out.weekdays], ["mon", "sun"]);
   assert.equal(out.statistic, "events");
@@ -832,8 +861,8 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.equal(out.resolution, undefined);
   assert.equal(out.compare, undefined);
   assert.equal(out.difference, undefined);
-  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, statistic: "active" } } }));
-  assert.equal(out.weekdays, undefined);
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, statistic: "active", weekdays: [...P.WEEKDAYS] } } }));
+  assert.equal(out.weekdays, undefined); // alle sieben = keine Auswahl
   assert.equal(out.statistic, undefined);
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "before_after" } } }));
   assert.match(out.since, /^\d{4}-\d{2}-\d{2}$/);
@@ -844,6 +873,205 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, compare: "none", since: "2026-11-12" } } }));
   assert.equal(out.since, undefined);
   assert.equal(out.compare, undefined);
+});
+
+/* ---- Wochentagsgruppen (0.10.0) ---- */
+
+test("Wochentagsgruppen: keine, eine (Filter), zwei (Vergleich), alt weekday_weekend", () => {
+  const keys = (g) => [...g].map((x) => `${x.key}:${[...x.weekdays].join("")}`);
+  // keine Auswahl: alle Tage, im Graph wie heute
+  assert.deepEqual(keys(P.weekdayGroups({})), []);
+  assert.deepEqual(keys(P.referenceGroups({}, 3)), ["workday:01234"]);
+  assert.equal(P.heatmapRows({}).length, 7);
+  // nur A: Filter, Heatmap mit den einzelnen Tagen
+  assert.deepEqual(keys(P.referenceGroups({ weekdays: ["mon", "thu"] }, 3)), ["reference:03"]);
+  assert.deepEqual(keys(P.heatmapRows({ weekdays: ["mon", "thu"] })), ["mon:0", "thu:3"]);
+  assert.equal(P.hasCompare({ weekdays: ["mon", "thu"] }), false);
+  // nur B zählt wie A
+  assert.deepEqual(keys(P.heatmapRows({ weekdays_b: ["thu", "mon"] })), ["mon:0", "thu:3"]);
+  // beide: Vergleich, in der Heatmap zwei Gruppenzeilen
+  const cfg = { weekdays: ["mon", "thu"], weekdays_b: ["tue", "wed", "fri"] };
+  assert.deepEqual(keys(P.referenceGroups(cfg, 3)), ["group_a:03", "group_b:124"]);
+  assert.deepEqual(keys(P.heatmapRows(cfg)), ["group_a:03", "group_b:124"]);
+  assert.equal(P.hasCompare(cfg), true);
+  // Mo–Fr gegen Sa–So behält die Namen, wie compare: weekday_weekend
+  const ww = { weekdays: ["mon", "tue", "wed", "thu", "fri"], weekdays_b: ["sat", "sun"] };
+  assert.deepEqual(keys(P.heatmapRows(ww)), ["workday:01234", "weekend:56"]);
+  assert.deepEqual(keys(P.heatmapRows({ compare: "weekday_weekend" })), ["workday:01234", "weekend:56"]);
+  assert.deepEqual(keys(P.referenceGroups({ compare: "weekday_weekend", weekdays: ["mon", "sat"] }, 3)), ["workday:0", "weekend:5"]);
+  // mit Zeitvergleich filtert nur A
+  assert.deepEqual(keys(P.heatmapRows({ compare: "recent", weekdays: ["mon"], weekdays_b: ["tue"] })).map((k) => k.split(":")[1]), ["0", "0"]);
+  // Beschriftung
+  const names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+  assert.equal(P.daysLabel(names, new Set([0, 3])), "Mo, Do");
+  assert.equal(P.daysLabel(names, new Set([1, 2, 4])), "Di, Mi, Fr");
+  assert.equal(P.daysLabel(names, new Set([5, 6])), "Sa–So");
+});
+
+test("Wochentagsgruppen: ungleich große Gruppen je Tag gemittelt, Datenlücken, keine leere Gruppe", () => {
+  const now = P.wallToTs(2026, 11, 12, 12, 0, TZ); // Do
+  const cfg = { weekdays: ["mon", "thu"], weekdays_b: ["tue", "wed", "fri"] };
+  const val = (d, k) => ([0, 3].includes(d.weekday) ? 100 : 300) + k;
+  const days = filledDays(now, 14, val);
+  const g = P.computeModel(days, { statistic: "mean", now, mode: "graph", groups: P.referenceGroups(cfg, 3) });
+  assert.deepEqual([...g.references].map((r) => r.expectedDays), [4, 6]); // Mo/Do 2+2, Di/Mi/Fr 2+2+2
+  assert.equal(g.references[0].stats[5].mean, 105); // Mittel je Tag, keine Summe
+  assert.equal(g.references[1].stats[5].mean, 305);
+  const h = P.computeModel(days, { statistic: "mean", now, mode: "heatmap", rows: P.heatmapRows(cfg), difference: true });
+  assert.deepEqual([...h.rows].map((r) => r.key), ["group_a", "group_b"]);
+  assert.equal(h.diff[5].value, 200);
+  // Lücke: ein Dienstag ohne Daten zählt nicht als 0 und nicht als Tag mit Daten
+  const gap = P.buildDays(now, 14, TZ, 60);
+  for (const d of gap) {
+    if (d.ymd.d === 10 && d.ymd.m === 11) continue; // Di 10.11. fehlt
+    for (let k = 0; k < 24 && d.b[k] < now; k++) P.accumulateStats([d], [{ start: d.b[k], end: d.b[k + 1], mean: val(d, k) }], "mean", "hour");
+  }
+  const g2 = P.computeModel(gap, { statistic: "mean", now, mode: "graph", groups: P.referenceGroups(cfg, 3) });
+  assert.equal(g2.references[1].expectedDays, 6);
+  assert.equal(g2.references[1].daysWithData, 5);
+  assert.equal(g2.references[1].stats[5].mean, 305);
+  assert.equal(g2.references[1].stats[5].n, 5);
+  // Gruppe B ganz ohne Daten: keine leere Kurve, keine leere Zeile, keine Differenz
+  const onlyA = P.buildDays(now, 14, TZ, 60);
+  for (const d of onlyA) {
+    if (![0, 3].includes(d.weekday)) continue;
+    for (let k = 0; k < 24 && d.b[k] < now; k++) P.accumulateStats([d], [{ start: d.b[k], end: d.b[k + 1], mean: 1 }], "mean", "hour");
+  }
+  const g3 = P.computeModel(onlyA, { statistic: "mean", now, mode: "graph", groups: P.referenceGroups(cfg, 3) });
+  assert.deepEqual([...g3.references].map((r) => r.key), ["group_a"]);
+  const h3 = P.computeModel(onlyA, { statistic: "mean", now, mode: "heatmap", rows: P.heatmapRows(cfg), difference: true });
+  assert.deepEqual([...h3.rows].map((r) => r.key), ["group_a"]);
+  assert.equal(h3.diff, undefined);
+});
+
+test("Wochentagsgruppen: setConfig prüft weekdays_b", () => {
+  const el = w.document.createElement("pattern-card");
+  const base = { type: "custom:pattern-card", entity: "binary_sensor.b", mode: "heatmap" };
+  el.setConfig({ ...base, weekdays: ["mon", "thu"], weekdays_b: ["tue", "wed", "fri"] });
+  el.setConfig({ ...base, weekdays_b: [] });
+  assert.throws(() => el.setConfig({ ...base, weekdays: ["mon"], weekdays_b: ["mon", "tue"] }), /not in both/);
+  assert.throws(() => el.setConfig({ ...base, weekdays_b: ["tue"], compare: "before_after", since: "2026-11-01" }), /can't be combined with compare/);
+  assert.throws(() => el.setConfig({ ...base, weekdays_b: ["tue"], compare: "weekday_weekend" }), /can't be combined with compare/);
+  assert.throws(() => el.setConfig({ ...base, weekdays_b: "tue" }), /weekdays_b must be a list/);
+});
+
+test("Wochentagsgruppen: Karte heatmap und graph mit eigenen Gruppen", async () => {
+  const now = Date.now();
+  const entries = [];
+  for (let t = now - 21 * 24 * H; t < now; t += 3 * H) entries.push({ s: "on", lu: t / 1000 }, { s: "off", lu: (t + 20 * M) / 1000 });
+  const { hass } = makeHass(
+    { "binary_sensor.b": { entity_id: "binary_sensor.b", state: "off", attributes: { device_class: "motion" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [];
+      const s0 = Date.parse(msg.start_time) / 1000;
+      const e0 = Date.parse(msg.end_time) / 1000;
+      return { "binary_sensor.b": entries.filter((x) => x.lu >= s0 && x.lu < e0) };
+    }
+  );
+  const cfg = { type: "custom:pattern-card", entity: "binary_sensor.b", mode: "heatmap", days: 14, weekdays: ["mon", "thu"], weekdays_b: ["tue", "wed", "fri"] };
+  const el = mount(cfg, hass);
+  await flush();
+  const root = el.shadowRoot;
+  assert.deepEqual([...root.querySelectorAll(".wd")].map((x) => x.textContent), ["Mo, Do", "Di, Mi, Fr", "Δ"]);
+  assert.match(root.querySelectorAll(".legend")[1].textContent, /mehr Mo, Do.*mehr Di, Mi, Fr/);
+  assert.doesNotMatch(root.querySelector(".sub").textContent, /Mo, Do/, "Untertitel ohne Filterliste");
+  const d = [...root.querySelectorAll(".cell.diff")].find((c) => c.getAttribute("style"));
+  d.dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(root.querySelector(".tooltip").textContent, /Di, Mi, Fr − Mo, Do: [+−-]?\d/);
+  // nur Gruppe A: Filter mit den einzelnen Tagen, keine Differenz
+  el.setConfig({ ...cfg, weekdays_b: undefined });
+  await flush();
+  assert.deepEqual([...root.querySelectorAll(".wd")].map((x) => x.textContent), ["Mo", "Do"]);
+  assert.equal(root.querySelectorAll(".cell.diff").length, 0);
+  // Regelmäßigkeit je Gruppe
+  el.setConfig({ ...cfg, statistic: "events", regularity: { enabled: true, min_samples: 1, threshold: 1 } });
+  await flush();
+  assert.ok(root.querySelectorAll(".cell.regular").length > 0);
+  assert.equal(root.querySelectorAll(".cell.diff.regular").length, 0);
+  // Graph: zwei Referenzen mit den Tagen als Namen
+  class Stub extends w.HTMLElement {}
+  if (!w.customElements.get("ha-chart-base")) w.customElements.define("ha-chart-base", Stub);
+  el.setConfig({ ...cfg, mode: "graph" });
+  await flush(20);
+  const chart = root.querySelector("ha-chart-base");
+  const legend = [...chart.options.legend.data].map((x) => x.name);
+  assert.deepEqual(legend, ["Heute", "Mo, Do (Ø)", "Spanne Mo, Do", "Di, Mi, Fr (Ø)", "Spanne Di, Mi, Fr"]);
+  el.remove();
+});
+
+test("Wochentagsgruppen: Editor mit Abschnitt, Umzug alter Konfiguration, Rundlauf", async () => {
+  const { hass } = makeHass({ "binary_sensor.m": { entity_id: "binary_sensor.m", state: "off", attributes: {} } }, () => []);
+  const ed = w.document.createElement("pattern-card-editor");
+  ed.hass = hass;
+  let out;
+  ed.addEventListener("config-changed", (e) => { out = e.detail.config; });
+  ed.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.m", mode: "heatmap" });
+  const panel = ed.querySelector(".pc-wd");
+  const forms = ed.querySelectorAll("ha-form");
+  assert.equal(forms.length, 2);
+  assert.ok(forms[0].nextElementSibling === panel && panel.nextElementSibling === forms[1], "Abschnitt zwischen den Formularen");
+  assert.equal(panel.open, false, "zugeklappt");
+  assert.match(panel.textContent, /Wochentage\s*Alle Tage/);
+  assert.ok(forms[1].schema.some((x) => x.name === "compare"));
+  assert.ok(!forms[1].schema.find((x) => x.name === "compare").selector.select.options.some((o) => o.value === "weekday_weekend"));
+  const btn = (g, d) => panel.querySelector(`button[data-group="${g}"][data-day="${d}"]`);
+  const click = (el) => el.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+  // Mo + Do gegen Di + Mi + Fr per Klick
+  click(btn("a", 0)); click(btn("a", 3));
+  assert.deepEqual([...out.weekdays], ["mon", "thu"]);
+  assert.equal(out.weekdays_b, undefined);
+  click(btn("b", 1)); click(btn("b", 2)); click(btn("b", 4));
+  assert.deepEqual([...out.weekdays_b], ["tue", "wed", "fri"]);
+  assert.match(panel.textContent, /Mo, Do gegen Di, Mi, Fr/);
+  assert.equal(btn("a", 1).className, "pc-wd-day other");
+  // ein Tag nie in beiden Gruppen: Do nach B verschieben
+  click(btn("b", 3));
+  assert.deepEqual([...out.weekdays], ["mon"]);
+  assert.deepEqual([...out.weekdays_b], ["tue", "wed", "thu", "fri"]);
+  click(btn("a", 3));
+  assert.deepEqual([...out.weekdays], ["mon", "thu"]);
+  assert.deepEqual([...out.weekdays_b], ["tue", "wed", "fri"]);
+  // Differenzzeile und Farben erscheinen, Beschriftung mit den Gruppen
+  const names = (schema) => schema.flatMap((s) => (s.type === "grid" ? s.schema.map((x) => x.name) : [s.name]));
+  assert.ok(names(forms[1].schema).includes("difference"));
+  assert.equal(forms[1].computeLabel({ name: "difference" }), "Differenzzeile (Di, Mi, Fr − Mo, Do)");
+  // Rundlauf über das Formular lässt die Gruppen stehen
+  forms[1].dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...forms[1].data, difference: false } } }));
+  assert.deepEqual([...out.weekdays_b], ["tue", "wed", "fri"]);
+  assert.equal(out.difference, false);
+  // Zeitvergleich: B wird verworfen und ausgegraut
+  forms[1].dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...forms[1].data, compare: "recent" } } }));
+  assert.equal(out.weekdays_b, undefined);
+  assert.deepEqual([...out.weekdays], ["mon", "thu"]);
+  assert.ok(btn("b", 1).disabled);
+  assert.match(panel.textContent, /Mit Zeitvergleich filtert Gruppe A nur die Tage/);
+  forms[1].dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...forms[1].data, compare: "none" } } }));
+  // Vorbelegung Werktage gegen Wochenende, dann alle Tage
+  click(panel.querySelector('[data-action="preset"]'));
+  assert.deepEqual([...out.weekdays], ["mon", "tue", "wed", "thu", "fri"]);
+  assert.deepEqual([...out.weekdays_b], ["sat", "sun"]);
+  assert.equal(forms[1].computeLabel({ name: "difference" }), "Differenzzeile (Wochenende − Werktage)");
+  click(panel.querySelector('[data-action="reset"]'));
+  assert.equal(out.weekdays, undefined);
+  assert.equal(out.weekdays_b, undefined);
+  assert.equal(out.difference, undefined);
+  // alte Konfiguration: Gruppen vorbelegt, beim nächsten Ändern in neuer Form
+  ed.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.m", mode: "heatmap", compare: "weekday_weekend" });
+  assert.equal(btn("a", 0).getAttribute("aria-pressed"), "true");
+  assert.equal(btn("b", 6).getAttribute("aria-pressed"), "true");
+  assert.equal(forms[1].data.compare, "none");
+  forms[0].dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...forms[0].data, days: 21 } } }));
+  assert.equal(out.compare, undefined);
+  assert.deepEqual([...out.weekdays], ["mon", "tue", "wed", "thu", "fri"]);
+  assert.deepEqual([...out.weekdays_b], ["sat", "sun"]);
+  // Englisch
+  const en = makeHass({ "binary_sensor.m": { entity_id: "binary_sensor.m", state: "off", attributes: {} } }, () => []).hass;
+  en.locale = { ...en.locale, language: "en" };
+  const ed2 = w.document.createElement("pattern-card-editor");
+  ed2.hass = en;
+  ed2.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.m", weekdays: ["mon", "thu"], weekdays_b: ["tue", "wed", "fri"] });
+  assert.match(ed2.querySelector(".pc-wd").textContent, /Weekdays\s*Mon, Thu vs\. Tue, Wed, Fri/);
+  assert.match(ed2.querySelector(".pc-wd").textContent, /Group A.*Group B/);
 });
 
 /* ---- Regelmäßigkeit (0.9.0) ---- */
@@ -1111,7 +1339,7 @@ for (const [name, fn] of tests) {
     console.log(`  ✓ ${name}`);
   } catch (e) {
     failed++;
-    console.log(`  ✗ ${name}\n    ${e.stack.split("\n").slice(0, 3).join("\n    ")}`);
+    console.log(`  ✗ ${name}\n    ${e.stack.split("\n").slice(0, 6).join("\n    ")}`);
   }
 }
 console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);

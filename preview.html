@@ -108,7 +108,7 @@ customElements.define("ha-chart-base", class extends HTMLElement {
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.9.3";
+const CARD_VERSION = "0.10.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -205,6 +205,7 @@ const I18N = {
     diff_label_before_after: "After − before",
     more_before: "more before",
     more_after: "more after",
+    more_group: "more {group}",
     // Editor
     entity: "Entity",
     mode: "Display",
@@ -227,7 +228,7 @@ const I18N = {
     max: "Scale maximum",
     helper_days: "Completed days before today",
     helper_resolution: "Automatic: graph 15 min where data allows, heatmap 1 h",
-    compare: "Comparison",
+    compare: "Time comparison",
     compare_none: "None",
     compare_weekday_weekend: "Workdays vs. weekend",
     compare_before_after: "Before vs. after a date",
@@ -252,6 +253,14 @@ const I18N = {
     reference_auto: "Same kind of day as today",
     reference_all: "All days",
     helper_reference: "Only applies without your own selection of weekdays",
+    weekday_group_a: "Group A",
+    weekday_group_b: "Group B",
+    weekdays_all: "All days",
+    weekdays_vs: "{a} vs. {b}",
+    weekdays_preset: "Workdays vs. weekend",
+    helper_weekdays: "No selection: all days. Only group A: just these days. Both groups: compare them.",
+    helper_weekdays_time: "With a time comparison, group A only filters the days.",
+    difference_row: "Difference row ({label})",
     difference: "Difference row (weekend − workdays)",
     hide_legend: "Hide legend",
     hide_subtitle: "Hide subtitle (period and hints)",
@@ -317,6 +326,7 @@ const I18N = {
     diff_label_before_after: "Nachher − Vorher",
     more_before: "mehr vorher",
     more_after: "mehr nachher",
+    more_group: "mehr {group}",
     entity: "Entity",
     mode: "Darstellung",
     mode_graph: "Verlauf (heute gegen Referenz)",
@@ -338,8 +348,8 @@ const I18N = {
     max: "Skala Maximum",
     helper_days: "Abgeschlossene Tage vor heute",
     helper_resolution: "Automatisch: Verlauf 15 min, wo die Daten es hergeben, Heatmap 1 h",
-    compare: "Vergleich",
-    compare_none: "Kein Vergleich",
+    compare: "Zeitvergleich",
+    compare_none: "Keiner",
     compare_weekday_weekend: "Werktage gegen Wochenende",
     compare_before_after: "Vorher gegen nachher (Stichtag)",
     compare_recent: "Letzte Tage gegen die Zeit davor",
@@ -363,6 +373,14 @@ const I18N = {
     reference_auto: "Tage derselben Art wie heute",
     reference_all: "Alle Tage",
     helper_reference: "Gilt nur ohne eigene Auswahl der Wochentage",
+    weekday_group_a: "Gruppe A",
+    weekday_group_b: "Gruppe B",
+    weekdays_all: "Alle Tage",
+    weekdays_vs: "{a} gegen {b}",
+    weekdays_preset: "Werktage gegen Wochenende",
+    helper_weekdays: "Ohne Auswahl: alle Tage. Nur Gruppe A: nur diese Tage. Beide Gruppen: Vergleich der beiden.",
+    helper_weekdays_time: "Mit Zeitvergleich filtert Gruppe A nur die Tage.",
+    difference_row: "Differenzzeile ({label})",
     difference: "Differenzzeile (Wochenende − Werktage)",
     hide_legend: "Legende ausblenden",
     hide_subtitle: "Untertitel ausblenden (Zeitraum und Hinweise)",
@@ -471,9 +489,16 @@ const timeZoneOf = (hass) => {
   return hass?.locale?.time_zone === "local" ? local || server || "UTC" : server || local || "UTC";
 };
 
+/** Liste von Wochentagsnamen → sortierte Indizes 0–6, ungültige Namen und Doppelte entfallen */
+const parseWeekdays = (list) => (Array.isArray(list)
+  ? [...new Set(list.map((w) => WEEKDAYS.indexOf(String(w).toLowerCase())).filter((i) => i >= 0))].sort((a, b) => a - b)
+  : []);
+
+/** Gefilterte Wochentage: `weekdays` (Gruppe A), sonst `weekdays_b`, sonst alle */
 const selectedWeekdays = (cfg) => {
-  const list = Array.isArray(cfg.weekdays) && cfg.weekdays.length ? cfg.weekdays : WEEKDAYS;
-  return new Set(list.map((w) => WEEKDAYS.indexOf(String(w).toLowerCase())).filter((i) => i >= 0));
+  let list = parseWeekdays(cfg.weekdays);
+  if (!list.length && cfg.compare !== "weekday_weekend") list = parseWeekdays(cfg.weekdays_b);
+  return new Set(list.length ? list : [0, 1, 2, 3, 4, 5, 6]);
 };
 
 const WORKDAYS = [0, 1, 2, 3, 4];
@@ -492,6 +517,40 @@ const dateKey = (str) => {
 const ymdKey = (ymd) => ymd.y * 10000 + ymd.m * 100 + ymd.d;
 
 /** gehört ein Tag zur Gruppe? Wochentag und, falls gesetzt, Datumsfilter */
+/** Beschriftung einer Tagesmenge: „Mo–Fr“ bei zusammenhängenden Tagen, sonst „Mo, Do“ */
+const daysLabel = (names, set) => {
+  const ds = [...set].sort((a, b) => a - b);
+  const contiguous = ds.every((d, i) => i === 0 || d === ds[i - 1] + 1);
+  return ds.length >= 2 && contiguous ? `${names[ds[0]]}–${names[ds[ds.length - 1]]}` : ds.map((d) => names[d]).join(", ");
+};
+
+/**
+ * Wochentagsgruppen (0.10.0): `weekdays` ist Gruppe A, `weekdays_b` Gruppe B.
+ * Keine Gruppe → [], eine → Filter [reference], zwei → Vergleich. Nur B belegt zählt wie A.
+ * Genau Mo–Fr gegen Sa–So behält die Namen Werktage/Wochenende, wie `compare: weekday_weekend`.
+ * Alt: `compare: weekday_weekend` → Werktage und Wochenende aus den gewählten Wochentagen.
+ */
+const weekdayGroups = (cfg) => {
+  if (cfg.compare === "weekday_weekend") {
+    const sel = selectedWeekdays(cfg);
+    return [{ key: "workday", weekdays: new Set(WORKDAYS.filter((d) => sel.has(d))), group: true },
+      { key: "weekend", weekdays: new Set(WEEKEND.filter((d) => sel.has(d))), group: true }].filter((g) => g.weekdays.size);
+  }
+  let a = parseWeekdays(cfg.weekdays);
+  let b = parseWeekdays(cfg.weekdays_b).filter((d) => !a.includes(d));
+  if (!a.length) { a = b; b = []; }
+  if (!a.length) return [];
+  if (!b.length || isSplitCompare(cfg)) return [{ key: "reference", weekdays: new Set(a) }];
+  const ww = a.join() === WORKDAYS.join() && b.join() === WEEKEND.join();
+  return [{ key: ww ? "workday" : "group_a", weekdays: new Set(a), group: true },
+    { key: ww ? "weekend" : "group_b", weekdays: new Set(b), group: true }];
+};
+
+/** Vergleich zweier Wochentagsgruppen (neu oder `compare: weekday_weekend`) */
+const isWeekdayCompare = (cfg) => cfg.compare === "weekday_weekend" || weekdayGroups(cfg).length === 2;
+/** irgendein Vergleich: Wochentagsgruppen, vorher/nachher oder zuletzt/davor */
+const hasCompare = (cfg) => isWeekdayCompare(cfg) || isSplitCompare(cfg);
+
 const inGroup = (g, d) => g.weekdays.has(d.weekday) && (!g.filter || g.filter(d));
 
 /** Vorher/Nachher: gewählte Wochentage, getrennt am Stichtag (Schlüssel YYYYMMDD, ohne Angabe `since`) */
@@ -499,8 +558,8 @@ const beforeAfterGroups = (cfg, split) => {
   const sel = selectedWeekdays(cfg);
   const k = split ?? dateKey(cfg.since);
   return [
-    { key: "before", weekdays: sel, filter: (d) => ymdKey(d.ymd) < k },
-    { key: "after", weekdays: sel, filter: (d) => ymdKey(d.ymd) >= k },
+    { key: "before", weekdays: sel, filter: (d) => ymdKey(d.ymd) < k, group: true },
+    { key: "after", weekdays: sel, filter: (d) => ymdKey(d.ymd) >= k, group: true },
   ];
 };
 const REFERENCE_MODES = ["auto", "all"];
@@ -513,13 +572,9 @@ const REFERENCE_MODES = ["auto", "all"];
  */
 const referenceGroups = (cfg, todayWeekday, split) => {
   const sel = selectedWeekdays(cfg);
-  const pick = (list) => new Set(list.filter((d) => sel.has(d)));
-  if (cfg.compare === "weekday_weekend") {
-    return [{ key: "workday", weekdays: pick(WORKDAYS) }, { key: "weekend", weekdays: pick(WEEKEND) }]
-      .filter((g) => g.weekdays.size);
-  }
+  if (isWeekdayCompare(cfg)) return weekdayGroups(cfg);
   if (isSplitCompare(cfg)) return beforeAfterGroups(cfg, split);
-  const explicit = Array.isArray(cfg.weekdays) && cfg.weekdays.length > 0;
+  const explicit = parseWeekdays(cfg.weekdays).length > 0 || parseWeekdays(cfg.weekdays_b).length > 0;
   if ((cfg.reference || "auto") === "auto" && !explicit) {
     const key = WEEKEND.includes(todayWeekday) ? "weekend" : "workday";
     return [{ key, weekdays: new Set(key === "weekend" ? WEEKEND : WORKDAYS), auto: true }];
@@ -530,12 +585,7 @@ const referenceGroups = (cfg, todayWeekday, split) => {
 /** Zeilen der Heatmap: je gewähltem Wochentag, im Vergleich Werktage und Wochenende */
 const heatmapRows = (cfg, split) => {
   const sel = selectedWeekdays(cfg);
-  if (cfg.compare === "weekday_weekend") {
-    return [
-      { key: "workday", weekdays: new Set(WORKDAYS.filter((d) => sel.has(d))) },
-      { key: "weekend", weekdays: new Set(WEEKEND.filter((d) => sel.has(d))) },
-    ].filter((r) => r.weekdays.size);
-  }
+  if (isWeekdayCompare(cfg)) return weekdayGroups(cfg);
   if (isSplitCompare(cfg)) return beforeAfterGroups(cfg, split);
   return [...sel].sort((a, b) => a - b).map((d) => ({ key: WEEKDAYS[d], weekdays: new Set([d]) }));
 };
@@ -911,8 +961,9 @@ const computeModel = (days, opts) => {
     model.rows = specs.map((spec) => {
       const ds = days.filter((d) => inGroup(spec, d));
       const vals = ds.map((d) => dayValues(d, statistic, now, true));
+      const rowDaysWithData = vals.filter((a) => a.some((v) => v != null)).length;
       expectedDays += ds.length;
-      daysWithData += vals.filter((a) => a.some((v) => v != null)).length;
+      daysWithData += rowDaysWithData;
       const cells = slotStats(vals, S).map((c) => ({ n: c.n, value: c.mean }));
       if (opts.regularity) slotRegularity(ds, statistic, now, S).forEach((r, k) => { cells[k].reg = r; });
       for (const c of cells) {
@@ -921,10 +972,12 @@ const computeModel = (days, opts) => {
         hi = Math.max(hi, c.value);
       }
       // weekday: Zeile aus genau einem Wochentag, beschriftet mit dessen Namen
-      return { ...spec, weekday: spec.weekdays.size === 1 && !spec.filter ? [...spec.weekdays][0] : undefined, cells, nDays: ds.length };
+      return { ...spec, weekday: spec.weekdays.size === 1 && !spec.filter ? [...spec.weekdays][0] : undefined, cells, nDays: ds.length, daysWithData: rowDaysWithData };
     });
     // Gruppen ohne Tage im Zeitraum (Stichtag außerhalb) entfallen
     if (opts.rows) model.rows = model.rows.filter((r) => r.nDays > 0);
+    // Vergleichsgruppe ohne einen Tag mit Daten: keine leere Zeile und keine Differenz
+    if (model.rows.some((r) => r.group && r.daysWithData > 0)) model.rows = model.rows.filter((r) => !r.group || r.daysWithData > 0);
     if (opts.difference && model.rows.length === 2) {
       const [a, b] = model.rows;
       model.diff = a.cells.map((ca, k) => {
@@ -955,6 +1008,10 @@ const computeModel = (days, opts) => {
     };
   });
   if (model.references.length > 1) model.references = model.references.filter((r) => r.expectedDays > 0);
+  // Vergleichsgruppe ohne einen Tag mit Daten: keine leere Kurve
+  if (model.references.length > 1 && model.references.some((r) => r.daysWithData > 0)) {
+    model.references = model.references.filter((r) => r.daysWithData > 0);
+  }
   model.todayVals = prep(today);
   model.daysWithData = model.references.reduce((s, r) => s + r.daysWithData, 0);
   model.expectedDays = model.references.reduce((s, r) => s + r.expectedDays, 0);
@@ -1478,6 +1535,13 @@ class PatternCard extends HTMLElement {
     if (config.days !== undefined && !(Number(config.days) >= 1)) throw new Error("days must be at least 1");
     if (config.compare !== undefined && !COMPARE_MODES.includes(config.compare)) throw new Error("compare must be none, weekday_weekend, before_after or recent");
     if (config.compare === "before_after" && dateKey(config.since) === null) throw new Error("compare: before_after needs since: YYYY-MM-DD");
+    if (config.weekdays !== undefined && !Array.isArray(config.weekdays)) throw new Error("weekdays must be a list of weekdays (mon … sun)");
+    if (config.weekdays_b !== undefined && !Array.isArray(config.weekdays_b)) throw new Error("weekdays_b must be a list of weekdays (mon … sun)");
+    if (parseWeekdays(config.weekdays_b).length) {
+      if (config.compare && config.compare !== "none") throw new Error("weekdays_b can't be combined with compare; with a time comparison use weekdays only");
+      const a = parseWeekdays(config.weekdays);
+      if (parseWeekdays(config.weekdays_b).some((d) => a.includes(d))) throw new Error("a weekday can be in weekdays or in weekdays_b, not in both");
+    }
     if (config.recent_days !== undefined && !(Number(config.recent_days) >= 1)) throw new Error("recent_days must be at least 1");
     if (config.reference !== undefined && !REFERENCE_MODES.includes(config.reference)) throw new Error("reference must be auto or all");
     for (const key of ["compare_colors", "difference_colors"]) {
@@ -1532,6 +1596,10 @@ class PatternCard extends HTMLElement {
   get hass() { return this._hass; }
 
   connectedCallback() {
+    if (!this._outside) {
+      this._outside = (ev) => this._onOutsidePointer(ev);
+      document.addEventListener("pointerdown", this._outside, true);
+    }
     if (!this._timer) this._timer = setInterval(() => this._tick(), MIN_MS);
     if (this._hass && this._config && this._today && Date.now() - this._today.fetchedAt > TODAY_REFRESH_MS) {
       this._refresh();
@@ -1539,6 +1607,8 @@ class PatternCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    if (this._outside) document.removeEventListener("pointerdown", this._outside, true);
+    this._outside = null;
     clearInterval(this._timer);
     this._timer = null;
     clearTimeout(this._stateRefreshTimer);
@@ -1729,7 +1799,7 @@ class PatternCard extends HTMLElement {
         cumulative: cfg.mode === "graph" && statistic === "sum" && !!cfg.cumulative,
         groups: referenceGroups(cfg, dayList[dayList.length - 1].weekday, split),
         rows: heatmapRows(cfg, split),
-        difference: !!cfg.compare && cfg.compare !== "none" && cfg.difference !== false,
+        difference: hasCompare(cfg) && cfg.difference !== false,
         regularity: !!regularityConfig(cfg, statistic),
       });
       this._model.periods = pp;
@@ -1784,7 +1854,8 @@ class PatternCard extends HTMLElement {
     }
     else parts.push(this._t("days_n", { n: days }));
     const sel = selectedWeekdays(cfg);
-    if (sel.size < 7) {
+    // im neuen Wochentagsvergleich nennen Legende und Zeilen die Gruppen
+    if (sel.size < 7 && !(cfg.compare !== "weekday_weekend" && isWeekdayCompare(cfg))) {
       const names = weekdayNames(this._hass);
       parts.push([...sel].sort().map((i) => names[i]).join(", "));
     }
@@ -1855,8 +1926,8 @@ class PatternCard extends HTMLElement {
       reference: neutral,
       // eine Referenz neutral grau, im Vergleich die nächsten Graph-Farben von HA
       refs: this._model?.references?.length > 1
-        ? { workday, weekend, before: workday, after: weekend, reference: neutral }
-        : { workday: neutral, weekend: neutral, before: neutral, after: neutral, reference: neutral },
+        ? { workday, weekend, before: workday, after: weekend, group_a: workday, group_b: weekend, reference: neutral }
+        : { workday: neutral, weekend: neutral, before: neutral, after: neutral, group_a: neutral, group_b: neutral, reference: neutral },
       workday,
       weekend,
       diffLess,
@@ -1868,6 +1939,10 @@ class PatternCard extends HTMLElement {
   /** Name einer Gruppe: Werktage, Wochenende, Vor/Ab <Datum> */
   _groupLabel(key) {
     const cfg = this._config;
+    if (key === "group_a" || key === "group_b") {
+      const g = weekdayGroups(cfg).find((x) => x.key === key);
+      return g ? daysLabel(weekdayNames(this._hass), g.weekdays) : this._t(`weekday_${key}`);
+    }
     const pp = this._model?.periods || periodPlan(cfg, todayYmd(Date.now(), timeZoneOf(this._hass)));
     if (cfg.compare === "recent" && (key === "before" || key === "after")) {
       return key === "after" ? this._t("group_recent_after", { n: pp.after }) : this._t("group_recent_before", { n: pp.before });
@@ -1889,6 +1964,12 @@ class PatternCard extends HTMLElement {
   _diffTexts() {
     if (this._config.compare === "recent") {
       return { label: this._t("diff_label_recent"), neg: this._t("more_earlier"), pos: this._t("more_recent") };
+    }
+    const gs = weekdayGroups(this._config);
+    if (this._config.compare !== "weekday_weekend" && gs.length === 2 && gs[0].key === "group_a") {
+      const a = this._groupLabel("group_a");
+      const b = this._groupLabel("group_b");
+      return { label: `${b} − ${a}`, neg: this._t("more_group", { group: a }), pos: this._t("more_group", { group: b }) };
     }
     return this._config.compare === "before_after"
       ? { label: this._t("diff_label_before_after"), neg: this._t("more_before"), pos: this._t("more_after") }
@@ -1952,6 +2033,8 @@ class PatternCard extends HTMLElement {
           weekend: this._t("ref_weekend"),
           before: this._t("ref_group", { group: this._groupLabel("before") }),
           after: this._t("ref_group", { group: this._groupLabel("after") }),
+          group_a: this._t("ref_group", { group: this._groupLabel("group_a") }),
+          group_b: this._t("ref_group", { group: this._groupLabel("group_b") }),
         },
         bandName: (ref, key, multi) => (multi
           ? this._t("band_group", { group: this._groupLabel(ref.key) })
@@ -2013,9 +2096,7 @@ class PatternCard extends HTMLElement {
     const rowLabel = (row) => {
       if (row.key === "before" || row.key === "after") return this._groupLabel(row.key);
       if (row.weekday !== undefined) return names[row.weekday];
-      const ds = [...row.weekdays].sort((a, b) => a - b);
-      const contiguous = ds.every((d, i) => i === 0 || d === ds[i - 1] + 1);
-      return ds.length >= 2 && contiguous ? `${names[ds[0]]}–${names[ds[ds.length - 1]]}` : ds.map((d) => names[d]).join(", ");
+      return daysLabel(names, row.weekdays);
     };
 
     // Differenzzeile: zweifarbig um 0, difference_colors (weniger, mehr)
@@ -2130,9 +2211,28 @@ class PatternCard extends HTMLElement {
       tip.style.left = `${x}px`;
       tip.style.top = `${y}px`;
     };
-    grid.addEventListener("pointerover", (ev) => show(ev.target));
-    grid.addEventListener("click", (ev) => show(ev.target));
-    grid.addEventListener("pointerleave", () => this._hideTooltip());
+    // Maus: Tooltip beim Überfahren, weg beim Verlassen. Touch und Stift: Tippen zeigt ihn,
+    // erneutes Tippen auf dieselbe Zelle oder Tippen außerhalb der Heatmap blendet ihn aus
+    // (Touch kennt kein Verlassen; pointerleave kommt dort schon vor dem click)
+    let pointerType = "mouse";
+    grid.addEventListener("pointerdown", (ev) => { pointerType = ev.pointerType || "mouse"; });
+    grid.addEventListener("pointerover", (ev) => { if ((ev.pointerType || "mouse") === "mouse") show(ev.target); });
+    grid.addEventListener("pointerleave", (ev) => { if ((ev.pointerType || "mouse") === "mouse") this._hideTooltip(); });
+    grid.addEventListener("click", (ev) => {
+      const cell = ev.target;
+      if (pointerType !== "mouse" && cell?.classList?.contains("hover")) this._hideTooltip();
+      else if (cell?.classList?.contains("cell")) show(cell);
+      else if (pointerType !== "mouse") this._hideTooltip();
+    });
+  }
+
+  /** Tippen außerhalb der Heatmap schließt den Tooltip (Touch) */
+  _onOutsidePointer(ev) {
+    const tip = this.shadowRoot?.querySelector(".tooltip");
+    if (!tip || tip.hidden) return;
+    const grid = this.shadowRoot.querySelector(".content > .heatmap");
+    if (grid && ev.composedPath().includes(grid)) return;
+    this._hideTooltip();
   }
 
   /** Tooltip-Zeilen der Regelmäßigkeit: Anteil und Stichprobe („Ereignis an 6 von 8 Samstagen“) */
@@ -2172,6 +2272,27 @@ if (!window.customCards.some((c) => c.type === "pattern-card")) {
  * Editor
  * ------------------------------------------------------------------------ */
 
+/** Zeitvergleiche im Editor; der Wochentagsvergleich läuft über die Gruppen */
+const EDITOR_COMPARE_MODES = ["none", "before_after", "recent"];
+/** Felder vor dem Abschnitt Wochentage: Entity, Darstellung, Name, Untertitel, Zeitraum/Auflösung */
+const EDITOR_TOP_FIELDS = 5;
+
+/** Alte Konfiguration `compare: weekday_weekend` in Gruppen A und B übersetzen (nur im Editor) */
+const migrateWeekdayCompare = (cfg) => {
+  if (cfg.compare !== "weekday_weekend") return cfg;
+  const v = { ...cfg };
+  const sel = selectedWeekdays(cfg);
+  let a = WORKDAYS.filter((d) => sel.has(d));
+  let b = WEEKEND.filter((d) => sel.has(d));
+  if (!a.length) { a = b; b = []; }
+  delete v.compare;
+  delete v.weekdays;
+  delete v.weekdays_b;
+  if (a.length && a.length < 7) v.weekdays = a.map((d) => WEEKDAYS[d]);
+  if (b.length) v.weekdays_b = b.map((d) => WEEKDAYS[d]);
+  return v;
+};
+
 const editorSchema = (cfg, kind, t) => {
   const mode = cfg.mode || "graph";
   const stats = STATISTICS_BY_KIND[kind] || [];
@@ -2201,16 +2322,13 @@ const editorSchema = (cfg, kind, t) => {
         },
       ],
     },
-    {
-      name: "weekdays",
-      selector: { select: { multiple: true, mode: "list", options: WEEKDAYS.map((v, i) => ({ value: v, label: t(`wd_${i}`) })) } },
-    },
+    // Wochentage: eigener aufklappbarer Abschnitt im Editor, nicht im Formular
     {
       name: "compare",
-      selector: { select: { mode: "dropdown", options: COMPARE_MODES.map((v) => ({ value: v, label: t(`compare_${v}`) })) } },
+      selector: { select: { mode: "dropdown", options: EDITOR_COMPARE_MODES.map((v) => ({ value: v, label: t(`compare_${v}`) })) } },
     },
   ];
-  const compare = !!cfg.compare && cfg.compare !== "none";
+  const compare = hasCompare(cfg);
   if (cfg.compare === "before_after") schema.push({ name: "since", selector: { date: {} } });
   if (cfg.compare === "recent") schema.push({ name: "recent_days", selector: { number: { min: 1, max: 365, mode: "box" } } });
   if (mode === "graph" && !compare) {
@@ -2289,10 +2407,121 @@ const editorSchema = (cfg, kind, t) => {
   return schema;
 };
 
+const EDITOR_STYLE = `
+  .pc-wd { display: block; margin: 8px 0 24px; }
+  .pc-wd-body { padding: 4px 0 8px; }
+  details.pc-wd { border: 1px solid var(--divider-color); border-radius: 12px; padding: 0 16px; }
+  details.pc-wd > summary { padding: 14px 0; cursor: pointer; }
+  details.pc-wd > summary .pc-wd-sec { color: var(--secondary-text-color); margin-inline-start: 8px; }
+  .pc-wd-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+  .pc-wd-row[aria-disabled="true"] { opacity: 0.45; }
+  .pc-wd-label { min-width: 72px; color: var(--primary-text-color); }
+  .pc-wd-days { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pc-wd-day {
+    font: inherit; font-size: 14px; min-width: 40px; height: 32px; padding: 0 10px; border-radius: 16px; cursor: pointer;
+    border: 1px solid var(--outline-color, var(--divider-color)); background: transparent; color: var(--primary-text-color);
+  }
+  .pc-wd-day[aria-pressed="true"] { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .pc-wd-day.other { opacity: 0.45; border-style: dashed; }
+  .pc-wd-day:disabled { cursor: default; }
+  .pc-wd-help { color: var(--secondary-text-color); font-size: 12px; margin: 4px 0 8px; }
+  .pc-wd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pc-wd-action {
+    font: inherit; font-size: 14px; background: transparent; border: none; color: var(--primary-color); cursor: pointer; padding: 6px 8px;
+    border-radius: 8px;
+  }
+  .pc-wd-action:disabled { color: var(--disabled-text-color, var(--secondary-text-color)); cursor: default; }
+`;
+
 class PatternCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { ...config };
+    // alte Konfiguration erst beim nächsten Ändern in der neuen Form zurückschreiben
+    this._config = migrateWeekdayCompare({ ...config });
     this._render();
+  }
+
+  /** Gruppen A und B als Indizes, wie sie die Karte auswertet */
+  _groups() {
+    const cfg = this._config;
+    let a = parseWeekdays(cfg.weekdays);
+    let b = parseWeekdays(cfg.weekdays_b).filter((d) => !a.includes(d));
+    if (!a.length) { a = b; b = []; }
+    if (a.length === 7 && !b.length) a = [];
+    return { a, b };
+  }
+
+  _setGroups(a, b) {
+    const v = { ...this._config };
+    v.weekdays = a.map((d) => WEEKDAYS[d]);
+    v.weekdays_b = b.map((d) => WEEKDAYS[d]);
+    this._apply(v);
+  }
+
+  _toggleDay(group, d) {
+    let { a, b } = this._groups();
+    const own = group === "a" ? a : b;
+    if (own.includes(d)) {
+      if (group === "a") a = a.filter((x) => x !== d); else b = b.filter((x) => x !== d);
+    } else if (group === "a") {
+      a = [...a, d].sort((x, y) => x - y);
+      b = b.filter((x) => x !== d);
+    } else {
+      b = [...b, d].sort((x, y) => x - y);
+      a = a.filter((x) => x !== d);
+    }
+    // nur B belegt: B wird zu A (Filter); so bleibt A immer die erste Gruppe
+    if (!a.length) { a = b; b = []; }
+    this._setGroups(a, b);
+  }
+
+  /** Abschnitt Wochentage: zugeklappt mit Zusammenfassung, aufgeklappt zwei Reihen Mo–So */
+  _renderWeekdays() {
+    if (!this._wd) {
+      const native = !!customElements.get("ha-expansion-panel");
+      this._wd = document.createElement(native ? "ha-expansion-panel" : "details");
+      this._wd.className = "pc-wd";
+      if (native) this._wd.outlined = true;
+      else this._wd.innerHTML = `<summary><span class="pc-wd-head"></span><span class="pc-wd-sec"></span></summary>`;
+      const body = document.createElement("div");
+      body.className = "pc-wd-body";
+      this._wd.appendChild(body);
+      this._wd.addEventListener("click", (ev) => {
+        const btn = ev.target.closest?.("button");
+        if (!btn || btn.disabled || !this._wd.contains(btn)) return;
+        ev.preventDefault();
+        if (btn.dataset.day !== undefined) this._toggleDay(btn.dataset.group, Number(btn.dataset.day));
+        else if (btn.dataset.action === "preset") this._setGroups([...WORKDAYS], [...WEEKEND]);
+        else if (btn.dataset.action === "reset") this._setGroups([], []);
+      });
+    }
+    const names = weekdayNames(this._hass);
+    const { a, b } = this._groups();
+    const time = isSplitCompare(this._config);
+    const summary = !a.length ? this._t("weekdays_all")
+      : b.length && !time ? this._t("weekdays_vs", { a: daysLabel(names, new Set(a)), b: daysLabel(names, new Set(b)) })
+        : daysLabel(names, new Set(a));
+    if (this._wd.tagName === "DETAILS") {
+      this._wd.querySelector(".pc-wd-head").textContent = this._t("weekdays");
+      this._wd.querySelector(".pc-wd-sec").textContent = summary;
+    } else {
+      this._wd.header = this._t("weekdays");
+      this._wd.secondary = summary;
+    }
+    const row = (group, own, other, disabled) => {
+      const days = WEEKDAYS.map((_, d) => {
+        const on = own.includes(d);
+        const cls = !on && other.includes(d) ? "pc-wd-day other" : "pc-wd-day";
+        return `<button type="button" class="${cls}" data-group="${group}" data-day="${d}" aria-pressed="${on}"${disabled ? " disabled" : ""}>${escapeHtml(names[d])}</button>`;
+      }).join("");
+      return `<div class="pc-wd-row" data-group="${group}" aria-disabled="${disabled}"><span class="pc-wd-label">${escapeHtml(this._t(`weekday_group_${group}`))}</span><div class="pc-wd-days">${days}</div></div>`;
+    };
+    const ww = a.join() === WORKDAYS.join() && b.join() === WEEKEND.join();
+    this._wd.querySelector(".pc-wd-body").innerHTML = `<style>${EDITOR_STYLE}</style>`
+      + row("a", a, time ? [] : b, false)
+      + row("b", time ? [] : b, a, time)
+      + `<div class="pc-wd-help">${escapeHtml(this._t(time ? "helper_weekdays_time" : "helper_weekdays"))}</div>`
+      + `<div class="pc-wd-actions"><button type="button" class="pc-wd-action" data-action="preset"${ww || time ? " disabled" : ""}>${escapeHtml(this._t("weekdays_preset"))}</button>`
+      + `<button type="button" class="pc-wd-action" data-action="reset"${a.length || b.length ? "" : " disabled"}>${escapeHtml(this._t("weekdays_all"))}</button></div>`;
   }
 
   set hass(hass) {
@@ -2312,17 +2541,19 @@ class PatternCardEditor extends HTMLElement {
   _render() {
     if (!this._hass || !this._config) return;
     if (!this._form) {
+      // zwei Formulare mit dem Abschnitt Wochentage dazwischen; beide teilen dieselben Daten
       this._form = document.createElement("ha-form");
-      this._form.addEventListener("value-changed", (ev) => this._changed(ev));
-      this.appendChild(this._form);
+      this._form2 = document.createElement("ha-form");
+      for (const f of [this._form, this._form2]) f.addEventListener("value-changed", (ev) => this._changed(ev));
+      this._renderWeekdays();
+      this.append(this._form, this._wd, this._form2);
     }
+    this._renderWeekdays();
     const cfg = this._config;
     const kind = guessKind(this._hass.states[cfg.entity]);
     this._kind = kind;
-    const form = this._form;
-    form.hass = this._hass;
-    form.schema = editorSchema(cfg, kind, (k) => this._t(k));
-    form.data = {
+    const schema = editorSchema(cfg, kind, (k) => this._t(k));
+    const data = {
       mode: "graph",
       days: DEFAULT_DAYS,
       resolution: "auto",
@@ -2338,22 +2569,28 @@ class PatternCardEditor extends HTMLElement {
       regularity_threshold: cfg.regularity?.threshold ?? DEFAULT_REGULARITY_THRESHOLD,
       regularity_min_samples: cfg.regularity?.min_samples ?? DEFAULT_REGULARITY_MIN_SAMPLES,
       regularity_color: cfg.regularity?.color,
-      weekdays: [...WEEKDAYS],
       ...cfg,
       statistic: resolveStatistic(cfg.statistic, kind),
     };
-    form.computeLabel = (s) => {
-      const groups = cfg.compare === "before_after" ? ["group_before_short", "group_after_short"]
-        : cfg.compare === "recent" ? ["group_recent_before_short", "group_recent_after_short"]
-          : ["group_workday", "group_weekend"];
+    // Namen der beiden Gruppen für Farben und Differenzzeile
+    const names = weekdayNames(this._hass);
+    const { a, b } = this._groups();
+    const groupNames = cfg.compare === "before_after" ? [this._t("group_before_short"), this._t("group_after_short")]
+      : cfg.compare === "recent" ? [this._t("group_recent_before_short"), this._t("group_recent_after_short")]
+        : a.join() === WORKDAYS.join() && b.join() === WEEKEND.join() ? [this._t("group_workday"), this._t("group_weekend")]
+          : [daysLabel(names, new Set(a)), daysLabel(names, new Set(b))];
+    const diffLabel = cfg.compare === "before_after" ? this._t("diff_label_before_after")
+      : cfg.compare === "recent" ? this._t("diff_label_recent") : `${groupNames[1]} − ${groupNames[0]}`;
+    const computeLabel = (s) => {
       const hint = this._t("color_of_hint_graph");
-      if (s.name === "compare_color_1") return `${this._t("color_of", { group: this._t(groups[0]) })} (${hint})`;
-      if (s.name === "compare_color_2") return `${this._t("color_of", { group: this._t(groups[1]) })} (${hint})`;
+      if (s.name === "compare_color_1") return `${this._t("color_of", { group: groupNames[0] })} (${hint})`;
+      if (s.name === "compare_color_2") return `${this._t("color_of", { group: groupNames[1] })} (${hint})`;
+      if (s.name === "difference") return this._t("difference_row", { label: diffLabel });
       if (s.name === "difference_color_less") return this._t("color_less");
       if (s.name === "difference_color_more") return this._t("color_more");
       return this._t(s.name);
     };
-    form.computeHelper = (s) => ({
+    const computeHelper = (s) => ({
       days: this._t(cfg.compare === "before_after" ? "helper_days_before_after" : cfg.compare === "recent" ? "helper_days_recent" : "helper_days"),
       recent_days: this._t("helper_recent_days"),
       resolution: this._t("helper_resolution"),
@@ -2361,14 +2598,32 @@ class PatternCardEditor extends HTMLElement {
       since: this._t("helper_since"),
       regularity_enabled: this._t(resolveStatistic(cfg.statistic, kind) === "active" ? "helper_regularity_active" : "helper_regularity_events"),
     })[s.name];
+    const parts = [[this._form, schema.slice(0, EDITOR_TOP_FIELDS)], [this._form2, schema.slice(EDITOR_TOP_FIELDS)]];
+    for (const [form, sch] of parts) {
+      form.hass = this._hass;
+      form.schema = sch;
+      form.data = data;
+      form.computeLabel = computeLabel;
+      form.computeHelper = computeHelper;
+    }
   }
 
   _changed(ev) {
     ev.stopPropagation();
-    const v = { ...this._config, ...ev.detail.value };
-    // Standardwerte nicht in die Konfiguration schreiben
-    if (Array.isArray(v.weekdays) && WEEKDAYS.every((w) => v.weekdays.includes(w))) delete v.weekdays;
-    if (Array.isArray(v.weekdays)) v.weekdays = WEEKDAYS.filter((w) => v.weekdays.includes(w));
+    this._apply({ ...this._config, ...ev.detail.value });
+  }
+
+  _apply(v) {
+    if (v.compare === "weekday_weekend") v = migrateWeekdayCompare(v);
+    // Wochentage: A und B ohne Überschneidung, nur B wird zu A, mit Zeitvergleich nur A, alle sieben = keine Auswahl
+    let a = parseWeekdays(v.weekdays);
+    let b = parseWeekdays(v.weekdays_b).filter((d) => !a.includes(d));
+    if (!a.length) { a = b; b = []; }
+    if (v.compare && v.compare !== "none") b = [];
+    if (a.length === 7) a = [];
+    v.weekdays = a.length ? a.map((d) => WEEKDAYS[d]) : undefined;
+    v.weekdays_b = b.length ? b.map((d) => WEEKDAYS[d]) : undefined;
+    const twoGroups = a.length > 0 && b.length > 0;
     if (v.resolution === "auto") delete v.resolution;
     if (Number(v.days) === DEFAULT_DAYS) delete v.days;
     if (v.band === "both") delete v.band;
@@ -2386,7 +2641,8 @@ class PatternCardEditor extends HTMLElement {
       }
     } else delete v.since;
     if (v.compare !== "recent" || Number(v.recent_days) === DEFAULT_RECENT_DAYS) delete v.recent_days;
-    if (v.compare) delete v.reference;
+    const anyCompare = !!v.compare || twoGroups;
+    if (anyCompare) delete v.reference;
     else delete v.difference;
     if (v.mode === "heatmap") delete v.reference;
     if (v.reference === "auto") delete v.reference;
@@ -2412,7 +2668,7 @@ class PatternCardEditor extends HTMLElement {
     else if (regOn) v.regularity = reg;
     else delete v.regularity;
     if (v.mode !== "heatmap" || !REGULARITY_STATISTICS.includes(resolveStatistic(v.statistic, kind))) delete v.regularity;
-    if (!v.compare || v.compare === "none") { delete v.compare_colors; delete v.difference_colors; }
+    if (!anyCompare) { delete v.compare_colors; delete v.difference_colors; }
     if (v.mode !== "heatmap" || v.difference === false) delete v.difference_colors;
     if (v.mode === "heatmap") delete v.compare_colors;
     if (kind !== "counter") delete v.cumulative;
@@ -2420,6 +2676,7 @@ class PatternCardEditor extends HTMLElement {
       if (v[k] === undefined || v[k] === "" || v[k] === null) delete v[k];
     });
     this._config = v;
+    this._render();
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: v }, bubbles: true, composed: true }));
   }
 }
@@ -2434,6 +2691,7 @@ if (window.__PATTERN_CARD_TEST__) window.__patternCard = {
   makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND, bandsFor, dateKey, inGroup,
   axisFractionDigits, niceInterval, makeAxisFormatter, periodPlan, buildDaysFor,
   regularityConfig, isRegular, slotRegularity, withUnit,
+  parseWeekdays, weekdayGroups, isWeekdayCompare, hasCompare, migrateWeekdayCompare, daysLabel, EDITOR_TOP_FIELDS,
 };
 
 </script>
@@ -2564,6 +2822,9 @@ const configs = [
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "graph", days: 28 },
   { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, compare: "weekday_weekend", name: L("Werktage gegen Wochenende", "Workdays vs. weekend") },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: L("Belegung Werktage/Wochenende", "Occupancy: workdays vs. weekend") },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, weekdays: ["mon", "thu"], weekdays_b: ["tue", "wed", "fri"], name: L("Belegung: Mo + Do gegen Di + Mi + Fr", "Occupancy: Mon + Thu vs. Tue + Wed + Fri") },
+  { type: "custom:pattern-card", entity: "sensor.leistung", mode: "graph", days: 28, weekdays: ["mon", "thu"], weekdays_b: ["tue", "wed", "fri"], name: L("Strom: Mo + Do gegen Di + Mi + Fr", "Power: Mon + Thu vs. Tue + Wed + Fri") },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, weekdays: ["mon", "thu"], name: L("Belegung nur Mo und Do", "Occupancy: Mon and Thu only") },
   { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, difference_colors: ["green", "red"], name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
   { type: "custom:pattern-card", entity: "sensor.leistung_neu", mode: "heatmap", days: 56, compare: "recent", recent_days: 7, color: "amber", name: L("Letzte Woche gegen die 8 Wochen davor", "Last week vs. the eight weeks before") },
   { type: "custom:pattern-card", entity: "binary_sensor.waschmaschine", mode: "heatmap", days: 56, statistic: "events", regularity: { enabled: true, threshold: 70 }, name: L("Waschmaschine: regelmäßige Starts", "Washing machine: recurring starts") },

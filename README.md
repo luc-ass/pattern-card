@@ -43,7 +43,8 @@ Today (solid line) against the reference days (dashed mean). By default the refe
 ```yaml
 type: custom:pattern-card
 entity: sensor.grid_power
-compare: weekday_weekend
+weekdays: [mon, tue, wed, thu, fri]
+weekdays_b: [sat, sun]
 name: Workdays vs. weekend
 ```
 
@@ -96,12 +97,25 @@ For on/off entities the heatmap shows the share of each hour the entity was acti
 type: custom:pattern-card
 entity: binary_sensor.guest_toilet_motion
 mode: heatmap
-compare: weekday_weekend
+weekdays: [mon, tue, wed, thu, fri]
+weekdays_b: [sat, sun]
 ```
 
 Two rows instead of seven, plus a difference row (Δ = weekend − workdays). The difference row is colored with the workday color where workdays are higher and the weekend color where weekends are higher.
 
 ![Heatmap comparing workdays and weekend with a difference row](docs/images/heatmap-compare.png)
+
+### Your own weekday groups
+
+```yaml
+type: custom:pattern-card
+entity: binary_sensor.hallway_motion
+mode: heatmap
+weekdays: [mon, thu]
+weekdays_b: [tue, wed, fri]
+```
+
+Compares any two groups of weekdays, e.g. different working hours on Monday and Thursday. Each group is averaged per day, so groups of different size compare fairly. Only `weekdays` filters the days instead. In the visual editor this is the collapsible section *Weekdays* with a row of days for group A and group B.
 
 ### Before vs. after a change
 
@@ -161,10 +175,11 @@ All options can also be set in the visual editor.
 | `mode` | `graph` | `graph` or `heatmap` |
 | `name` | friendly name | Card title; `false` or a single space hides it (in the visual editor, enter a space) |
 | `days` | `28` | Completed days before today used for the reference and the heatmap. With `before_after`: days before `since`; with `recent`: days before the recent days |
-| `weekdays` | all | Only use these weekdays (`mon` … `sun`) |
+| `weekdays` | all | Group A: only use these weekdays (`mon` … `sun`) |
+| `weekdays_b` | – | Group B. With both groups set, the card compares them, e.g. `weekdays: [mon, thu]` and `weekdays_b: [tue, wed, fri]`. A day can only be in one group. Not combinable with `compare` |
 | `statistic` | by type | `active` or `events` for states, `mean` for measurements, `sum` for counters |
 | `resolution` | `auto` | `auto`, `5min`, `15min`, `30min`, `hour`. Auto: graph 15 min where the data allows it, heatmap 1 h |
-| `compare` | `none` | `weekday_weekend`: the graph shows workdays and weekend as two references; the heatmap shows Mon–Fri and Sat–Sun plus a difference row. `before_after`: days before vs. from `since` on, e.g. to check the effect of a change. `recent`: the last `recent_days` days vs. the `days` days before them |
+| `compare` | `none` | Time comparison. `before_after`: days before vs. from `since` on, e.g. to check the effect of a change. `recent`: the last `recent_days` days vs. the `days` days before them. The older `weekday_weekend` still works and equals `weekdays: [mon, tue, wed, thu, fri]` with `weekdays_b: [sat, sun]` |
 | `compare_colors` | graph colors 2 and 3 | Graph with `compare`: colors of the two references (lines, bands, tooltip), e.g. `[blue, red]` |
 | `difference_colors` | graph colors 2 and 3 | Heatmap with `compare`: colors of the difference row and its legend for less and more, e.g. `[green, red]` when less is better. The rows above keep the normal heatmap color |
 | `since` | – | With `compare: before_after`: date of the change (`YYYY-MM-DD`) |
