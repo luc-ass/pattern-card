@@ -134,6 +134,23 @@ No fixed date: the last seven completed days against the eight weeks directly be
 
 ![Heatmap comparing the last week with the eight weeks before](docs/images/heatmap-recent.png)
 
+### Recurring events
+
+```yaml
+type: custom:pattern-card
+entity: binary_sensor.washing_machine_running
+mode: heatmap
+statistic: events
+days: 56
+regularity:
+  enabled: true
+  threshold: 70
+```
+
+The fill color still shows how many times the machine started on average. A thin border marks the slots where at least one start happened on at least 70 % of the comparable days, so a regular Saturday wash stands out from a single busy day. The tooltip adds the rate and the sample, e.g. "Regularity: 75 % · Event on 6 of 8 Saturdays". With `statistic: active` the border means "active at some point in the slot" instead.
+
+![Heatmap with a border around a recurring slot](docs/images/heatmap-regularity.png)
+
 ## Options
 
 All options can also be set in the visual editor.
@@ -161,6 +178,11 @@ All options can also be set in the visual editor.
 | `color` | state color | Color of today's line or of the heatmap: hex, CSS or a theme color name such as `amber` |
 | `colors` | – | Heatmap: list of two or more colors from low to high, e.g. `["#e3f2fd", "#0d47a1"]` |
 | `min`, `max` | from data | Heatmap: scale limits |
+| `regularity` | off | Heatmap with `events` or `active`: border around slots where something happened on many of the comparable days. `true` or an object with the keys below |
+| `regularity.enabled` | `true` | `false` turns the border off but keeps the settings |
+| `regularity.threshold` | `70` | Minimum share of days (%) with at least one event (`events`) or with active time (`active`) in the slot. Several events on the same day count once |
+| `regularity.min_samples` | `4` | Minimum number of days with data in the slot; below it there is no border, as one event on one day would be 100 % |
+| `regularity.color` | primary text, 60 % | Border color: hex, CSS or a theme color name such as `amber` |
 
 ## How it works
 
@@ -179,6 +201,10 @@ All options can also be set in the visual editor.
 - **Today is never part of the reference.** The heatmap only uses completed time slots.
 - **Time slots follow the wall clock** in the time zone of your profile; days with a daylight saving change are handled.
 - **Attributes are not supported.** To analyse one, create a template sensor with a `state_class`, so it also gets long-term statistics.
+
+### Regularity
+
+For each cell the card counts the comparable days (same weekday, or the days of the group with `compare`) on which the state was known for at least half of the slot. Days without data, or with the entity `unavailable` for most of the slot, are left out instead of counting as days without an event. Today counts once the slot is complete, like the fill color. The rate is the share of those days with at least one event (`events`, the same switch-ons as the value) or with any active time (`active`). With `compare`, each row has its own rate; the difference row gets no border.
 
 ### Bands
 

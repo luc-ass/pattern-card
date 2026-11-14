@@ -835,6 +835,264 @@ test("Editor: Felder je Typ und Standardwerte nicht in der Konfiguration", async
   assert.equal(out.compare, undefined);
 });
 
+/* ---- Regelmäßigkeit (0.9.0) ---- */
+
+// Sonntag 15.11.2026 12:00: 56 Tage zurück enthalten genau 8 Samstage (26.09. bis 14.11.)
+const REG_NOW = P.wallToTs(2026, 11, 15, 12, 0, TZ);
+/** Tage mit Verlauf: perDay(day) liefert [[h, m, Zustand], …] ab Mitternacht oder null (keine Daten) */
+const regDays = (perDay, slot = 60) => {
+  const days = P.buildDays(REG_NOW, 56, TZ, slot);
+  for (const d of days) {
+    const list = perDay(d);
+    if (!list) continue;
+    const end = Math.min(d.end, REG_NOW);
+    const entries = [{ s: "off", lu: d.start / 1000 }, ...list.map(([h, m, st]) => ({ s: st, lu: P.wallToTs(d.ymd.y, d.ymd.m, d.ymd.d, h, m, TZ) / 1000 }))];
+    P.accumulateHistory([d], entries, d.start, end, "binary_sensor", "state");
+  }
+  return days;
+};
+const sats = (days) => days.filter((d) => d.weekday === 5 && !d.isToday);
+const satRow = (days, statistic = "events", rows) => {
+  const m = P.computeModel(days, { statistic, now: REG_NOW, mode: "heatmap", weekdays: new Set([5]), rows, regularity: true });
+  return m;
+};
+
+test("Regelmäßigkeit: 6 von 8 Samstagen = 75 %, mehrere Ereignisse am Tag zählen einmal", () => {
+  let i = 0;
+  const days = regDays((d) => {
+    if (d.weekday !== 5) return [];
+    const n = i++;
+    if (n >= 6) return [];
+    // erster Samstag: drei Starts im selben Slot
+    return n === 0
+      ? [[10, 5, "on"], [10, 10, "off"], [10, 20, "on"], [10, 25, "off"], [10, 40, "on"], [10, 45, "off"]]
+      : [[10, 30, "on"], [12, 0, "off"]]; // Programm 10:30–12:00: ein Start um 10:30, kein Ereignis um 11 oder 12
+  });
+  assert.equal(sats(days).length, 8);
+  const m = satRow(days);
+  const c = m.rows[0].cells[10];
+  assert.deepEqual({ ...c.reg }, { valid: 8, hits: 6 });
+  near(c.value, (3 + 5) / 8, 1e-12, "Füllwert bleibt der Mittelwert der Ereignisse");
+  assert.deepEqual({ ...m.rows[0].cells[11].reg }, { valid: 8, hits: 0 }, "Ende des Programms ist kein Ereignis");
+  assert.deepEqual({ ...m.rows[0].cells[3].reg }, { valid: 8, hits: 0 }, "ohne Ereignisse 0 %, Daten vorhanden");
+  // active: irgendwann im Slot aktiv, 10–11 und 11–12 Uhr
+  const a = satRow(days, "active");
+  assert.deepEqual({ ...a.rows[0].cells[10].reg }, { valid: 8, hits: 6 });
+  assert.deepEqual({ ...a.rows[0].cells[11].reg }, { valid: 8, hits: 5 });
+  // ohne Option kein reg im Modell
+  const off = P.computeModel(days, { statistic: "events", now: REG_NOW, mode: "heatmap", weekdays: new Set([5]) });
+  assert.equal(off.rows[0].cells[10].reg, undefined);
+});
+
+test("Regelmäßigkeit: fehlende Daten zählen nicht als Tag ohne Ereignis", () => {
+  let i = 0;
+  const days = regDays((d) => {
+    if (d.weekday !== 5) return [];
+    const n = i++;
+    if (n < 2) return null; // kein Verlauf (vor Beginn der Aufzeichnung)
+    if (n === 2) return [[9, 0, "unavailable"], [11, 0, "off"]]; // 10–11 Uhr unbekannt
+    if (n === 3) return [[10, 0, "unavailable"], [10, 40, "off"]]; // nur 20 von 60 min bekannt
+    return [[10, 30, "on"], [10, 35, "off"]];
+  });
+  const c = satRow(days).rows[0].cells[10];
+  assert.deepEqual({ ...c.reg }, { valid: 4, hits: 4 }, "nur die 4 Samstage mit ausreichend Daten");
+  assert.equal(c.n, 5, "Füllwert wie bisher: jeder Tag mit bekannter Zeit im Slot");
+});
+
+test("Regelmäßigkeit: heute nur abgeschlossene Slots, Zeitumstellung, 15-min-Auflösung", () => {
+  // heute (Sonntag 12:00): Slot 10 zählt mit, Slot 12 nicht
+  const days = regDays((d) => (d.weekday === 6 ? [[10, 10, "on"], [10, 15, "off"], [12, 10, "on"], [12, 15, "off"]] : []));
+  const sun = P.computeModel(days, { statistic: "events", now: REG_NOW, mode: "heatmap", weekdays: new Set([6]), regularity: true }).rows[0];
+  assert.deepEqual({ ...sun.cells[10].reg }, { valid: 9, hits: 9 });
+  assert.deepEqual({ ...sun.cells[12].reg }, { valid: 8, hits: 8 }, "heute 12–13 Uhr noch offen, zählt nicht");
+  // Herbst 25.10.: Slot 2–3 Uhr umfasst 2 h, Frühjahr: leerer Slot zählt nicht
+  const autumn = P.buildDays(Date.UTC(2026, 9, 25, 12, 0), 0, TZ, 60)[0];
+  P.accumulateHistory([autumn], [{ s: "off", lu: autumn.start / 1000 }, { s: "on", lu: (autumn.b[2] + 90 * M) / 1000 }, { s: "off", lu: (autumn.b[2] + 95 * M) / 1000 }], autumn.start, autumn.end, "binary_sensor", "state");
+  assert.deepEqual({ ...P.slotRegularity([autumn], "events", autumn.end + H, 24)[2] }, { valid: 1, hits: 1 });
+  const spring = P.buildDays(Date.UTC(2026, 2, 29, 12, 0), 0, TZ, 60)[0];
+  P.accumulateHistory([spring], [{ s: "off", lu: spring.start / 1000 }], spring.start, spring.end, "binary_sensor", "state");
+  const sr = P.slotRegularity([spring], "events", spring.end + H, 24);
+  assert.equal(sr[2].valid, 0, "02–03 Uhr gibt es am 29.03. nicht");
+  assert.equal(sr[1].valid, 1);
+  // 15 min: Ereignis 10:30 nur im Slot 10:30–10:45
+  const q = regDays((d) => (d.weekday === 5 ? [[10, 30, "on"], [10, 35, "off"]] : []), 15);
+  const qr = satRow(q).rows[0].cells;
+  assert.deepEqual({ ...qr[42].reg }, { valid: 8, hits: 8 });
+  assert.deepEqual({ ...qr[41].reg }, { valid: 8, hits: 0 });
+});
+
+test("Regelmäßigkeit: Schwelle, Mindestzahl der Tage und Konfiguration", () => {
+  const rc = P.regularityConfig({ mode: "heatmap", regularity: { enabled: true, threshold: 75, min_samples: 4 } }, "events");
+  assert.equal(P.isRegular({ valid: 8, hits: 6 }, rc), true, "genau am Schwellwert");
+  assert.equal(P.isRegular({ valid: 8, hits: 5 }, rc), false, "unter dem Schwellwert");
+  assert.equal(P.isRegular({ valid: 3, hits: 3 }, rc), false, "unter min_samples");
+  assert.equal(P.isRegular({ valid: 4, hits: 3 }, rc), true);
+  assert.equal(P.isRegular({ valid: 0, hits: 0 }, P.regularityConfig({ mode: "heatmap", regularity: { min_samples: 0 } }, "events")), false);
+  const def = P.regularityConfig({ mode: "heatmap", regularity: true }, "active");
+  assert.equal(def.threshold, 70);
+  assert.equal(def.minSamples, 4);
+  assert.equal(P.regularityConfig({ mode: "heatmap", regularity: { enabled: false } }, "events"), null);
+  assert.equal(P.regularityConfig({ mode: "heatmap", regularity: true }, "mean"), null, "nur events und active");
+  assert.equal(P.regularityConfig({ mode: "graph", regularity: true }, "events"), null, "nur Heatmap");
+  assert.equal(P.regularityConfig({ mode: "heatmap" }, "events"), null);
+  const el = w.document.createElement("pattern-card");
+  const base = { type: "custom:pattern-card", entity: "binary_sensor.x", mode: "heatmap" };
+  assert.throws(() => el.setConfig({ ...base, regularity: "ja" }), /regularity/);
+  assert.throws(() => el.setConfig({ ...base, regularity: { threshold: 0 } }), /threshold/);
+  assert.throws(() => el.setConfig({ ...base, regularity: { threshold: 120 } }), /threshold/);
+  assert.throws(() => el.setConfig({ ...base, regularity: { min_samples: 0 } }), /min_samples/);
+  el.setConfig({ ...base, regularity: { enabled: true, threshold: 70, min_samples: 4, color: "amber" } });
+  el.setConfig({ ...base, regularity: true });
+});
+
+/** Karte mit 8 Wochen Waschmaschine: samstags 10:30 an 6 von 8 Samstagen, mittwochs 18:15 an 2 von 8 */
+// feste Zeit: Mittwoch 18.11.2026 08:00, heute zählt so weder Samstag noch Mittwoch 18 Uhr mit
+const WASHER_NOW = P.wallToTs(2026, 11, 18, 8, 0, TZ);
+const withNow = async (ts, fn) => {
+  const orig = w.Date.now;
+  w.Date.now = () => ts;
+  try { await fn(); } finally { w.Date.now = orig; }
+};
+const washerHass = () => {
+  const entries = [];
+  const now = WASHER_NOW;
+  const tz = TZ;
+  const t0 = { y: 2026, m: 11, d: 18 };
+  let sat = 0;
+  let wed = 0;
+  entries.push({ s: "off", lu: (now - 60 * 864e5) / 1000 });
+  for (let i = 57; i >= 1; i--) {
+    const ymd = P.ymdAdd(t0, -i);
+    const wd = P.weekdayOf(ymd);
+    const at = (h, m) => P.wallToTs(ymd.y, ymd.m, ymd.d, h, m, tz) / 1000;
+    if (wd === 5 && i <= 56 && sat++ < 6) entries.push({ s: "on", lu: at(10, 30) }, { s: "off", lu: at(12, 0) });
+    if (wd === 2 && i <= 56 && wed++ < 2) entries.push({ s: "on", lu: at(18, 15) }, { s: "off", lu: at(19, 30) });
+  }
+  return makeHass(
+    { "binary_sensor.wasche": { entity_id: "binary_sensor.wasche", state: "off", attributes: { friendly_name: "Waschmaschine", device_class: "running" } } },
+    (msg) => {
+      if (msg.type === "recorder/get_statistics_metadata") return [];
+      const s = Date.parse(msg.start_time) / 1000;
+      const e = Date.parse(msg.end_time) / 1000;
+      // wie HA: Zustand zu Beginn des Abschnitts zuerst
+      const before = entries.filter((x) => x.lu < s).pop();
+      return { "binary_sensor.wasche": [...(before ? [{ ...before, lu: s }] : []), ...entries.filter((x) => x.lu >= s && x.lu < e)] };
+    }
+  );
+};
+
+test("Karte heatmap: Rahmen für regelmäßige Ereignisse, Füllfarbe unverändert, Tooltip", () => withNow(WASHER_NOW, async () => {
+  const { hass } = washerHass();
+  const base = { type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 56 };
+  const plain = mount(base, hass);
+  const el = mount({ ...base, regularity: { enabled: true, threshold: 70 } }, hass);
+  await flush(20);
+  const cellsOf = (x) => [...x.shadowRoot.querySelectorAll(".cell")];
+  const a = cellsOf(plain);
+  const b = cellsOf(el);
+  assert.equal(a.length, b.length);
+  // Füllfarben identisch, ohne Option keine Markierung und keine Legende dazu
+  assert.deepEqual(a.map((c) => c.getAttribute("style")), b.map((c) => c.getAttribute("style")));
+  assert.equal(plain.shadowRoot.querySelectorAll(".regular").length, 0);
+  assert.equal(plain.shadowRoot.querySelector(".content").innerHTML.includes("regular"), false);
+  const reg = b.filter((c) => c.classList.contains("regular"));
+  assert.equal(reg.length, 1, "nur Samstag 10–11 Uhr");
+  assert.equal(reg[0].dataset.r, "5");
+  assert.equal(reg[0].dataset.k, "10");
+  assert.ok(el.shadowRoot.querySelector(".legend .regular"));
+  assert.match(el.shadowRoot.querySelector(".legend").textContent, /an mind\. 70 % der Tage/);
+  reg[0].dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  const tip = el.shadowRoot.querySelector(".tooltip").textContent;
+  assert.match(tip, /Ereignisse: 0,8 Ereignisse/);
+  assert.match(tip, /Regelmäßigkeit: 75 %/);
+  assert.match(tip, /Ereignis an 6 von 8 Samstagen/);
+  // Mittwoch 18–19 Uhr: 25 %, kein Rahmen, Tooltip trotzdem mit Anteil
+  const wed = b.find((c) => c.dataset.r === "2" && c.dataset.k === "18");
+  assert.equal(wed.classList.contains("regular"), false);
+  wed.dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(el.shadowRoot.querySelector(".tooltip").textContent, /Regelmäßigkeit: 25 % ?Ereignis an 2 von 8 Mittwochen/);
+  // ohne Option kein Zusatz im Tooltip
+  cellsOf(plain).find((c) => c.dataset.r === "5" && c.dataset.k === "10").dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.doesNotMatch(plain.shadowRoot.querySelector(".tooltip").textContent, /Regelmäßigkeit/);
+  // Schwelle 80 %: kein Rahmen; min_samples 9: kein Rahmen, Hinweis im Tooltip
+  el.setConfig({ ...base, regularity: { threshold: 80 } });
+  await flush(20);
+  assert.equal(el.shadowRoot.querySelectorAll(".cell.regular").length, 0);
+  el.setConfig({ ...base, regularity: { min_samples: 9, color: "amber" } });
+  await flush(20);
+  assert.equal(el.shadowRoot.querySelectorAll(".cell.regular").length, 0);
+  assert.equal(el.shadowRoot.querySelector("ha-card").style.getPropertyValue("--pc-regular-color"), "var(--amber-color)");
+  cellsOf(el).find((c) => c.dataset.r === "5" && c.dataset.k === "10").dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(el.shadowRoot.querySelector(".tooltip").textContent, /zu wenige Tage für den Rahmen \(mind\. 9\)/);
+  // Anteil aktiv: irgendwann aktiv, auch 11–12 Uhr
+  el.setConfig({ ...base, statistic: "active", regularity: true });
+  await flush(20);
+  const act = cellsOf(el).filter((c) => c.classList.contains("regular")).map((c) => `${c.dataset.r}/${c.dataset.k}`);
+  assert.deepEqual(act, ["5/10", "5/11"]);
+  cellsOf(el).find((c) => c.dataset.r === "5" && c.dataset.k === "11").dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(el.shadowRoot.querySelector(".tooltip").textContent, /Aktiv an 6 von 8 Samstagen/);
+  plain.remove();
+  el.remove();
+}));
+
+test("Karte heatmap: Regelmäßigkeit im Vergleich je Gruppe, nicht in der Differenzzeile", () => withNow(WASHER_NOW, async () => {
+  const { hass } = washerHass();
+  const el = mount({ type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 56, compare: "weekday_weekend", regularity: { threshold: 35 } }, hass);
+  await flush(20);
+  const root = el.shadowRoot;
+  // Wochenende 10–11 Uhr: 6 von 16 Tagen = 37,5 %
+  const reg = [...root.querySelectorAll(".cell.regular")];
+  assert.deepEqual(reg.map((c) => `${c.dataset.r}/${c.dataset.k}`), ["1/10"]);
+  assert.equal(root.querySelectorAll(".cell.diff.regular").length, 0);
+  reg[0].dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(root.querySelector(".tooltip").textContent, /Regelmäßigkeit: 38 % ?Ereignis an 6 von 16 Tagen/);
+  const d = [...root.querySelectorAll(".cell.diff")].find((c) => c.dataset.k === "10");
+  d.dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.doesNotMatch(root.querySelector(".tooltip").textContent, /Regelmäßigkeit/);
+  // recent: Gruppen je Abschnitt, Karte lädt
+  el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 28, compare: "recent", recent_days: 14, regularity: { min_samples: 1, threshold: 10 } });
+  await flush(20);
+  assert.equal(root.querySelectorAll(".wd").length, 3);
+  assert.ok(root.querySelectorAll(".cell.regular").length >= 1);
+  assert.equal(root.querySelectorAll(".cell.diff.regular").length, 0);
+  el.remove();
+}));
+
+test("Editor: Regelmäßigkeit nur bei Heatmap mit Ereignissen oder Anteil aktiv", async () => {
+  const t = (k) => k;
+  const names = (schema) => schema.flatMap((s) => (s.type === "grid" ? s.schema.map((x) => x.name) : [s.name]));
+  assert.ok(names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("regularity_enabled"));
+  assert.ok(!names(P.editorSchema({ mode: "heatmap" }, "state", t)).includes("regularity_threshold"), "Felder erst nach dem Einschalten");
+  const on = names(P.editorSchema({ mode: "heatmap", regularity: { enabled: true } }, "state", t));
+  assert.ok(["regularity_threshold", "regularity_min_samples", "regularity_color"].every((n) => on.includes(n)));
+  assert.ok(!names(P.editorSchema({ mode: "heatmap" }, "measurement", t)).includes("regularity_enabled"));
+  assert.ok(!names(P.editorSchema({ mode: "graph" }, "state", t)).includes("regularity_enabled"));
+  assert.ok(names(P.editorSchema({ mode: "heatmap" }, "timestamp", t)).includes("regularity_enabled"));
+
+  const ed = w.document.createElement("pattern-card-editor");
+  const { hass } = makeHass({ "binary_sensor.m": { entity_id: "binary_sensor.m", state: "off", attributes: {} } }, () => []);
+  ed.hass = hass;
+  ed.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.m", mode: "heatmap", statistic: "events" });
+  let out;
+  ed.addEventListener("config-changed", (e) => { out = e.detail.config; });
+  const form = ed.querySelector("ha-form");
+  assert.equal(form.data.regularity_enabled, false);
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, regularity_enabled: true } } }));
+  assert.deepEqual({ ...out.regularity }, { enabled: true });
+  assert.equal(out.regularity_enabled, undefined);
+  ed.setConfig(out);
+  assert.equal(ed.querySelector("ha-form").data.regularity_threshold, 70);
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, regularity_threshold: 75, regularity_min_samples: 6, regularity_color: "amber" } } }));
+  assert.deepEqual({ ...out.regularity }, { enabled: true, threshold: 75, min_samples: 6, color: "amber" });
+  ed.setConfig(out);
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...form.data, regularity_enabled: false } } }));
+  assert.equal(out.regularity, undefined);
+  // Umschalten auf Graph verwirft die Option
+  ed.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.m", mode: "heatmap", regularity: { enabled: true } });
+  form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...ed.querySelector("ha-form").data, mode: "graph" } } }));
+  assert.equal(out.regularity, undefined);
+});
+
 for (const [name, fn] of tests) {
   try {
     await fn();

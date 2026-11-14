@@ -55,3 +55,7 @@ Leitlinie: so nativ wie möglich in Funktion und Aussehen (HA-Frontend als Refer
 - Umsetzung nach Empfehlung: zuerst Vorher/Nachher ab Stichtag (Heizungsänderungen, Takten der Therme-Pumpe), „Tage nach Bedingung“ (kalt/mild, Anwesenheit) später, wenn Gas Heizen ein paar Wochen Daten hat
 - Testdashboard: Küche (Belegung), Garagentor (Ereignisse, Werktage/Wochenende), Therme-Takten (Ereignisse, vorher/nachher)
 - PV: besser eine eigene Kalender-Heatmap (Tag × Uhrzeit) mit gleicher Optik, als separates Projekt
+
+### Nachtrag 2026-11-14: Regelmäßigkeit (0.9.0)
+- Konzept von Lucas („Regelmäßigkeit von Ereignissen“), umgesetzt ohne Rückfragen, Abstimmung danach
+- Eigene Entscheidungen zur Prüfung: Option als Objekt `regularity` (wie im Konzept, Kurzform `true`), auch für `active` („irgendwann im Slot aktiv“), gültiger Tag ab halbem Slot mit bekanntem Zustand, Standardfarbe Primärtext mit 60 % Deckkraft, Legendeneintrag links neben der Farbskala, heute mit abgeschlossenen Slots wie die Füllfarbe

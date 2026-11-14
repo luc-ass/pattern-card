@@ -32,6 +32,7 @@ hide_subtitle: false        # ab 0.5.0: Untertitel (Zeitraum, Tage mit Daten, Hi
 hide_legend: false          # ab 0.4.0: Legende ausblenden (Graph: Serien, Heatmap: Farbskala), Name wie bei statistics-graph
 cumulative: false           # nur Zähler: kumuliert ab Mitternacht
 # nur heatmap
+regularity: { threshold: 70 }   # ab 0.9.0, nur events/active, s. „Regelmäßigkeit“
 color: "#ff9800"            # eine Farbe: Skala von transparent bis zur Farbe
 # oder
 colors: ["#e3f2fd", "#0d47a1"]   # zwei oder mehr Stufen von niedrig nach hoch
@@ -122,6 +123,31 @@ Die Karte erkennt den Typ der Entity und holt die Metadaten über `recorder/get_
 - **Repo `luc-ass/pattern-card`**, HACS (`hacs.json`, `content_in_root`). README auf Englisch, die Projekt-Doku auf Deutsch.
 - **Installation an deiner Instanz** erst nach OK (Datei unter `/config/www/`, Ressource, Testdashboard), mit Eintrag im `CHANGELOG.md` von ha-organisation.
 - **Testdaten**: Strom `sensor.flur_kg_stromzahler_netz_leistung` (Messwert), `sensor.flur_kg_stromzahler_netz_import` (Zähler), Gäste-WC `binary_sensor.bewegung_eg_gaste_wc` und `light.licht_eg_gaste_wc` (Zustände, Verlauf erst ab 09.11.2026).
+
+## Regelmäßigkeit (0.9.0)
+
+Wunsch Lucas (2026-11-14, Konzept „Regelmäßigkeit von Ereignissen“): In der Heatmap sichtbar machen, in welchen Zeitfenstern regelmäßig etwas passiert, ohne die Füllfarbe zu ändern. Kein neuer Wert für `statistic`, sondern eine Zusatzoption.
+
+```yaml
+regularity:
+  enabled: true      # Standard true, wenn das Objekt da ist; false schaltet aus und behält die Werte
+  threshold: 70      # Mindestanteil der Tage in %
+  min_samples: 4     # Mindestzahl gültiger Tage im Slot
+  color: amber       # optional, wie color; Standard --primary-text-color mit 60 % Deckkraft
+```
+
+`regularity: true` ist die Kurzform mit Standardwerten.
+
+- **Gilt nur** für `mode: heatmap` mit `statistic: events` oder `active` (Zustände, Zeitstempel). Bei `mean`, `sum` und im Graph wirkungslos, der Editor bietet es dort nicht an und verwirft es beim Umschalten
+- **Berechnung je Zeile und Slot** (`slotRegularity`, in `computeModel` aus denselben befüllten Tagen, keine weitere Abfrage): Nenner `valid` = Tage der Zeile, an denen der Zustand mindestens die Hälfte des Slots bekannt war (`w[k] ≥ 0,5 × Slotlänge`; `unavailable`/`unknown` und Zeit vor Beginn des Verlaufs zählen nicht). Zähler `hits` = davon Tage mit mindestens einem Ereignis (`ev[k] ≥ 1`, dieselbe Ereignislogik wie `events`: Wechsel von inaktiv nach aktiv) bzw. mit aktiver Zeit (`v[k] > 0`, „irgendwann im Slot aktiv“). Mehrere Ereignisse an einem Tag zählen einmal
+- **Heute** zählt wie bei der Füllfarbe nur mit abgeschlossenen Slots. **Zeitumstellung**: Slots nach Wanduhr wie bisher, der leere Slot im Frühjahr hat Länge 0 und zählt nicht, die doppelte Stunde im Herbst zählt einmal mit 2 h
+- **Rahmen**, wenn `valid ≥ min_samples` und `hits / valid ≥ threshold` (genau am Schwellwert: ja; gerechnet ganzzahlig `hits × 100 ≥ threshold × valid`). Unter `min_samples` nie
+- **Darstellung**: `box-shadow: inset 0 0 0 1.5px` in der Rahmenfarbe. Ändert weder Füllfarbe noch Zellgröße, liegt unter dem Hover-Rahmen. Legende links „an mind. 70 % der Tage“ mit Musterzelle (entfällt mit `hide_legend`)
+- **Tooltip** zusätzlich „Regelmäßigkeit: 75 %“ (mit Rahmen-Marker, wenn markiert) und „Ereignis an 6 von 8 Samstagen“ bzw. „Aktiv an …“, in Gruppenzeilen „… von 16 Tagen“. Unter `min_samples` der Hinweis „zu wenige Tage für den Rahmen (mind. 4)“
+- **Vergleich**: je Gruppenzeile eigene Regelmäßigkeit, die Differenzzeile bekommt keinen Rahmen und keinen Zusatz im Tooltip
+- **Editor**: Schalter „Regelmäßige Ereignisse hervorheben“, danach Mindesthäufigkeit (%), Mindestanzahl Referenztage, Rahmenfarbe. Standardwerte werden nicht geschrieben (`regularity: { enabled: true }`)
+- **Abweichung von der Zahl der Tage im Tooltip** („Ø aus n Tagen“): Der Füllwert nutzt wie bisher jeden Tag mit bekannter Zeit im Slot, die Regelmäßigkeit nur Tage mit mindestens halbem Slot. An den Rändern des Verlaufs kann der Nenner deshalb kleiner sein
+- **Nicht enthalten**: eigener Statistikmodus für Wahrscheinlichkeiten, Anomalien, Prognosen, Detailansicht der Tage je Zelle
 
 ## Aufräumen (0.8.2)
 

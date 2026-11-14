@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.8.2";
+const CARD_VERSION = "0.9.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -38,6 +38,11 @@ const TODAY_REFRESH_MS = 5 * MIN_MS;
 const STATE_REFRESH_THROTTLE_MS = 30 * 1000;
 const REF_SETTLE_MS = 15 * MIN_MS; // Stundenstatistik des Vortags ist erst nach Mitternacht vollständig
 const CHART_LOAD_TIMEOUT_MS = 10000;
+// Regelmäßigkeit (Heatmap): Anteil der Tage mit Ereignis bzw. aktiv im Slot
+const REGULARITY_STATISTICS = ["events", "active"];
+const DEFAULT_REGULARITY_THRESHOLD = 70;
+const DEFAULT_REGULARITY_MIN_SAMPLES = 4;
+const REGULARITY_MIN_COVERAGE = 0.5; // ein Tag zählt nur, wenn der Zustand mindestens den halben Slot bekannt war
 
 // wie TIMESTAMP_STATE_DOMAINS im Frontend: Zustand ist ein Zeitstempel
 const TIMESTAMP_DOMAINS = new Set(["button", "event", "input_button", "scene"]);
@@ -161,6 +166,20 @@ const I18N = {
     color_more: "Difference row: color for more",
     group_before_short: "before",
     group_after_short: "after",
+    regularity_label: "Regularity",
+    regularity_events_on: "Event on {hits} of {n} {days}",
+    regularity_active_on: "Active on {hits} of {n} {days}",
+    regularity_too_few: "too few days for the border (at least {min})",
+    regularity_legend: "at least {threshold} % of days",
+    days_plural: "days",
+    wd_plural_0: "Mondays", wd_plural_1: "Tuesdays", wd_plural_2: "Wednesdays", wd_plural_3: "Thursdays",
+    wd_plural_4: "Fridays", wd_plural_5: "Saturdays", wd_plural_6: "Sundays",
+    regularity_enabled: "Highlight recurring events",
+    regularity_threshold: "Minimum occurrence rate (%)",
+    regularity_color: "Border color",
+    regularity_min_samples: "Minimum reference days",
+    helper_regularity_events: "Border around slots with at least one event on this share of days",
+    helper_regularity_active: "Border around slots that were active at some point on this share of days",
   },
   de: {
     today: "Heute",
@@ -257,6 +276,20 @@ const I18N = {
     color_more: "Differenzzeile: Farbe für mehr",
     group_before_short: "vorher",
     group_after_short: "nachher",
+    regularity_label: "Regelmäßigkeit",
+    regularity_events_on: "Ereignis an {hits} von {n} {days}",
+    regularity_active_on: "Aktiv an {hits} von {n} {days}",
+    regularity_too_few: "zu wenige Tage für den Rahmen (mind. {min})",
+    regularity_legend: "an mind. {threshold} % der Tage",
+    days_plural: "Tagen",
+    wd_plural_0: "Montagen", wd_plural_1: "Dienstagen", wd_plural_2: "Mittwochen", wd_plural_3: "Donnerstagen",
+    wd_plural_4: "Freitagen", wd_plural_5: "Samstagen", wd_plural_6: "Sonntagen",
+    regularity_enabled: "Regelmäßige Ereignisse hervorheben",
+    regularity_threshold: "Mindesthäufigkeit (%)",
+    regularity_color: "Rahmenfarbe",
+    regularity_min_samples: "Mindestanzahl Referenztage",
+    helper_regularity_events: "Rahmen um Zeitfenster mit mindestens einem Ereignis an diesem Anteil der Tage",
+    helper_regularity_active: "Rahmen um Zeitfenster, die an diesem Anteil der Tage irgendwann aktiv waren",
   },
 };
 
@@ -410,6 +443,25 @@ const heatmapRows = (cfg, split) => {
   if (isSplitCompare(cfg)) return beforeAfterGroups(cfg, split);
   return [...sel].sort((a, b) => a - b).map((d) => ({ key: WEEKDAYS[d], weekdays: new Set([d]) }));
 };
+
+/**
+ * Regelmäßigkeit aus der Konfiguration: `regularity: true` oder `{ enabled, threshold, min_samples, color }`.
+ * null, wenn aus oder für Darstellung und Wert ohne Bedeutung (nur Heatmap mit events oder active).
+ */
+const regularityConfig = (cfg, statistic) => {
+  const r = cfg.regularity;
+  if (!r || cfg.mode !== "heatmap" || !REGULARITY_STATISTICS.includes(statistic)) return null;
+  const o = r === true ? {} : r;
+  if (o.enabled === false) return null;
+  return {
+    threshold: o.threshold != null && o.threshold !== "" ? Number(o.threshold) : DEFAULT_REGULARITY_THRESHOLD,
+    minSamples: o.min_samples != null && o.min_samples !== "" ? Math.round(Number(o.min_samples)) : DEFAULT_REGULARITY_MIN_SAMPLES,
+    color: o.color,
+  };
+};
+
+/** Regelmäßigkeit einer Zelle {valid, hits} ab Schwelle und Mindestzahl der Tage markieren? */
+const isRegular = (reg, rc) => !!reg && !!rc && reg.valid > 0 && reg.valid >= rc.minSamples && reg.hits * 100 >= rc.threshold * reg.valid;
 
 /* --------------------------------------------------------------------------
  * Zeitzonen und Tagesraster
@@ -675,6 +727,29 @@ const dayValues = (day, statistic, now, completedOnly) => {
   return out;
 };
 
+/**
+ * Regelmäßigkeit je Slot über mehrere Tage: valid = Tage, an denen der Zustand mindestens
+ * REGULARITY_MIN_COVERAGE des Slots bekannt war (fehlende Daten zählen nicht als „kein Ereignis“),
+ * hits = davon Tage mit mindestens einem Ereignis (events) bzw. mit aktiver Zeit (active).
+ * Mehrere Ereignisse am selben Tag zählen einmal. Heute nur abgeschlossene Slots.
+ */
+const slotRegularity = (days, statistic, now, S) => {
+  const out = [];
+  for (let k = 0; k < S; k++) {
+    let valid = 0;
+    let hits = 0;
+    for (const d of days) {
+      if (d.isToday && d.b[k + 1] > now) continue;
+      const len = d.b[k + 1] - d.b[k];
+      if (!(len > 0) || !(d.w[k] >= len * REGULARITY_MIN_COVERAGE)) continue;
+      valid++;
+      if (statistic === "events" ? d.ev[k] >= 1 : d.v[k] > 0) hits++;
+    }
+    out.push({ valid, hits });
+  }
+  return out;
+};
+
 /** laufende Summe ab Mitternacht; Lücken zählen 0, ohne Daten am Tag null */
 const cumulate = (vals, day, now) => {
   if (!vals.some((v) => v != null)) return vals.map(() => null);
@@ -743,6 +818,7 @@ const computeModel = (days, opts) => {
       expectedDays += ds.length;
       daysWithData += vals.filter((a) => a.some((v) => v != null)).length;
       const cells = slotStats(vals, S).map((c) => ({ n: c.n, value: c.mean }));
+      if (opts.regularity) slotRegularity(ds, statistic, now, S).forEach((r, k) => { cells[k].reg = r; });
       for (const c of cells) {
         if (c.value == null) continue;
         lo = Math.min(lo, c.value);
@@ -1210,6 +1286,16 @@ const STYLE = `
   }
   .has-rows .cell { height: 100%; min-height: 4px; }
   .cell.hover { outline: 2px solid var(--primary-text-color); outline-offset: -1px; }
+  /* Regelmäßigkeit: feiner Rahmen innen, ändert weder Füllfarbe noch Größe */
+  .cell.regular, .legend .regular, .tooltip .marker.regular {
+    box-shadow: inset 0 0 0 1.5px var(--pc-regular-color, color-mix(in srgb, var(--primary-text-color) 60%, transparent));
+  }
+  .legend .regular {
+    display: inline-block; width: 12px; height: 10px; flex: none;
+    border-radius: var(--pattern-card-cell-radius, 3px); background: var(--secondary-background-color);
+  }
+  .legend .reg-text { margin-inline-end: auto; }
+  .tooltip .marker.regular { border-radius: 3px; }
   .cell.diff, .wd.diff { margin-top: 6px; }
   .legend + .legend { margin-top: 4px; }
   .hour {
@@ -1290,6 +1376,12 @@ class PatternCard extends HTMLElement {
       }
     }
     if (config.band !== undefined && !BAND_MODES.includes(config.band)) throw new Error("band must be both, iqr, wide, minmax or none");
+    const reg = config.regularity;
+    if (reg !== undefined && typeof reg !== "boolean") {
+      if (!reg || typeof reg !== "object" || Array.isArray(reg)) throw new Error("regularity must be true or an object");
+      if (reg.threshold != null && !(Number(reg.threshold) > 0 && Number(reg.threshold) <= 100)) throw new Error("regularity.threshold must be between 1 and 100");
+      if (reg.min_samples != null && !(Number(reg.min_samples) >= 1)) throw new Error("regularity.min_samples must be at least 1");
+    }
     const prev = this._config;
     this._config = { mode: "graph", ...config };
     const changed = !prev || JSON.stringify(prev) !== JSON.stringify(this._config);
@@ -1528,6 +1620,7 @@ class PatternCard extends HTMLElement {
         groups: referenceGroups(cfg, dayList[dayList.length - 1].weekday, split),
         rows: heatmapRows(cfg, split),
         difference: !!cfg.compare && cfg.compare !== "none" && cfg.difference !== false,
+        regularity: !!regularityConfig(cfg, statistic),
       });
       this._model.periods = pp;
       this._model.coarse = refData.coarse;
@@ -1824,13 +1917,19 @@ class PatternCard extends HTMLElement {
       return rgbaString([c[0], c[1], c[2], Math.min(1, Math.abs(v) / diffMax)]);
     };
     const signed = (v) => (v > 0 ? `+${fmt(v)}` : fmt(v));
+    const fmt0 = makeNumberFormatter(this._hass, cfg.entity, "active");
+
+    // Regelmäßigkeit: Rahmen nur in den Zeilen, nicht in der Differenzzeile
+    const rc = regularityConfig(cfg, m.statistic);
+    const regColor = rc ? cssColor(rc.color) : null;
 
     let html = "";
     m.rows.forEach((row, ri) => {
       html += `<div class="wd" style="grid-row:${ri + 1};grid-column:1">${escapeHtml(rowLabel(row))}</div>`;
       row.cells.forEach((c, k) => {
         const bg = c.value == null ? "" : ` style="background:${colorOf(c.value)}"`;
-        html += `<div class="cell" data-r="${ri}" data-k="${k}"${bg}></div>`;
+        const cls = isRegular(c.reg, rc) ? "cell regular" : "cell";
+        html += `<div class="${cls}" data-r="${ri}" data-k="${k}"${bg}></div>`;
       });
     });
     let nRows = m.rows.length;
@@ -1850,7 +1949,10 @@ class PatternCard extends HTMLElement {
       html += `<div class="hour" style="grid-row:${hourRow};grid-column:${k + 2} / span ${Math.min(step, S - k)}">${h}</div>`;
     }
     const gradient = `linear-gradient(to right, ${stops.map((x, i) => `${rgbaString(x)} ${Math.round((i / (stops.length - 1)) * 100)}%`).join(", ")})`;
-    let legend = `<div class="legend"><span dir="ltr">${escapeHtml(withUnit(fmt(lo), unit))}</span><span class="bar" style="background:${gradient}"></span><span dir="ltr">${escapeHtml(withUnit(fmt(hi), unit))}</span></div>`;
+    const regLegend = rc
+      ? `<span class="regular"></span><span class="reg-text">${escapeHtml(this._t("regularity_legend", { threshold: fmt0(rc.threshold) }))}</span>`
+      : "";
+    let legend = `<div class="legend">${regLegend}<span dir="ltr">${escapeHtml(withUnit(fmt(lo), unit))}</span><span class="bar" style="background:${gradient}"></span><span dir="ltr">${escapeHtml(withUnit(fmt(hi), unit))}</span></div>`;
     if (diff) {
       const dg = `linear-gradient(to right, ${rgbaString([neg[0], neg[1], neg[2], 1])}, ${rgbaString([neg[0], neg[1], neg[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 0])} 50%, ${rgbaString([pos[0], pos[1], pos[2], 1])})`;
       legend += `<div class="legend"><span>${escapeHtml(diffTexts.neg)}</span><span dir="ltr">${escapeHtml(withUnit(signed(-diffMax), unit))}</span><span class="bar" style="background:${dg}"></span><span dir="ltr">${escapeHtml(withUnit(signed(diffMax), unit))}</span><span>${escapeHtml(diffTexts.pos)}</span></div>`;
@@ -1859,6 +1961,10 @@ class PatternCard extends HTMLElement {
     if (cfg.hide_legend) legend = "";
     content.classList.remove("graph");
     content.classList.add("heatmap");
+    // Rahmenfarbe für Zellen, Legende und Tooltip
+    const card = this.shadowRoot.querySelector("ha-card");
+    if (regColor) card.style.setProperty("--pc-regular-color", regColor);
+    else card.style.removeProperty("--pc-regular-color");
     content.innerHTML = `<div class="heatmap" style="--pc-slots:${S};--pc-rows:${nRows}">${html}</div>${legend}`;
     this._chart = null;
 
@@ -1887,6 +1993,7 @@ class PatternCard extends HTMLElement {
         const color = c.value == null ? "var(--secondary-background-color)" : colorOf(c.value);
         const label = this._t(`stat_${m.statistic}`);
         body = `${escapeHtml(rowLabel(row))} ${escapeHtml(time)}<br><span class="marker" style="background:${color}"></span>${escapeHtml(label)}: <span dir="ltr">${escapeHtml(valueText)}</span><br><span class="muted">${escapeHtml(this._t("avg_of_days", { n: c.n }))}</span>`;
+        if (rc && c.reg) body += this._regularityTip(c.reg, rc, row, m.statistic, fmt0);
       }
       const tip = this.shadowRoot.querySelector(".tooltip");
       tip.innerHTML = body;
@@ -1906,6 +2013,18 @@ class PatternCard extends HTMLElement {
     grid.addEventListener("pointerover", (ev) => show(ev.target));
     grid.addEventListener("click", (ev) => show(ev.target));
     grid.addEventListener("pointerleave", () => this._hideTooltip());
+  }
+
+  /** Tooltip-Zeilen der Regelmäßigkeit: Anteil und Stichprobe („Ereignis an 6 von 8 Samstagen“) */
+  _regularityTip(reg, rc, row, statistic, fmt0) {
+    const { valid, hits } = reg;
+    const rate = valid ? withUnit(fmt0((hits / valid) * 100), "%") : "–";
+    const days = row.weekday !== undefined ? this._t(`wd_plural_${row.weekday}`) : this._t("days_plural");
+    const on = this._t(statistic === "events" ? "regularity_events_on" : "regularity_active_on", { hits, n: valid, days });
+    const marker = isRegular(reg, rc) ? `<span class="marker regular" style="background:transparent"></span>` : "";
+    let out = `<br>${marker}${escapeHtml(this._t("regularity_label"))}: <span dir="ltr">${escapeHtml(rate)}</span><br><span class="muted">${escapeHtml(on)}</span>`;
+    if (valid < rc.minSamples) out += `<br><span class="muted">${escapeHtml(this._t("regularity_too_few", { min: rc.minSamples }))}</span>`;
+    return out;
   }
 
   _hideTooltip() {
@@ -2031,6 +2150,21 @@ const editorSchema = (cfg, kind, t) => {
       ],
     });
     schema.push({ name: "hide_legend", selector: { boolean: {} } });
+    // Regelmäßigkeit nur, wo sie eine Bedeutung hat: Ereignisse oder Anteil aktiv
+    if (REGULARITY_STATISTICS.includes(resolveStatistic(cfg.statistic, kind))) {
+      schema.push({ name: "regularity_enabled", selector: { boolean: {} } });
+      if (cfg.regularity && cfg.regularity.enabled !== false) {
+        schema.push({
+          type: "grid",
+          name: "",
+          schema: [
+            { name: "regularity_threshold", selector: { number: { min: 1, max: 100, step: 1, mode: "box", unit_of_measurement: "%" } } },
+            { name: "regularity_min_samples", selector: { number: { min: 1, max: 365, step: 1, mode: "box" } } },
+          ],
+        });
+        schema.push({ name: "regularity_color", selector: { ui_color: {} } });
+      }
+    }
   }
   return schema;
 };
@@ -2080,6 +2214,10 @@ class PatternCardEditor extends HTMLElement {
       compare_color_2: cfg.compare_colors?.[1],
       difference_color_less: cfg.difference_colors?.[0],
       difference_color_more: cfg.difference_colors?.[1],
+      regularity_enabled: !!cfg.regularity && cfg.regularity.enabled !== false,
+      regularity_threshold: cfg.regularity?.threshold ?? DEFAULT_REGULARITY_THRESHOLD,
+      regularity_min_samples: cfg.regularity?.min_samples ?? DEFAULT_REGULARITY_MIN_SAMPLES,
+      regularity_color: cfg.regularity?.color,
       weekdays: [...WEEKDAYS],
       ...cfg,
       statistic: resolveStatistic(cfg.statistic, kind),
@@ -2101,6 +2239,7 @@ class PatternCardEditor extends HTMLElement {
       resolution: this._t("helper_resolution"),
       reference: this._t("helper_reference"),
       since: this._t("helper_since"),
+      regularity_enabled: this._t(resolveStatistic(cfg.statistic, kind) === "active" ? "helper_regularity_active" : "helper_regularity_events"),
     })[s.name];
   }
 
@@ -2139,6 +2278,20 @@ class PatternCardEditor extends HTMLElement {
     v.compare_colors = pair(v.compare_color_1, v.compare_color_2);
     v.difference_colors = pair(v.difference_color_less, v.difference_color_more);
     for (const k of ["compare_color_1", "compare_color_2", "difference_color_less", "difference_color_more"]) delete v[k];
+    // Regelmäßigkeit: Einzelfelder zum Objekt, Standardwerte weglassen
+    const regOn = v.regularity_enabled;
+    const reg = {};
+    if (regOn) {
+      reg.enabled = true;
+      if (v.regularity_threshold != null && v.regularity_threshold !== "" && Number(v.regularity_threshold) !== DEFAULT_REGULARITY_THRESHOLD) reg.threshold = Number(v.regularity_threshold);
+      if (v.regularity_min_samples != null && v.regularity_min_samples !== "" && Number(v.regularity_min_samples) !== DEFAULT_REGULARITY_MIN_SAMPLES) reg.min_samples = Number(v.regularity_min_samples);
+      if (v.regularity_color) reg.color = v.regularity_color;
+    }
+    for (const k of ["regularity_enabled", "regularity_threshold", "regularity_min_samples", "regularity_color"]) delete v[k];
+    if (regOn === undefined) { /* Feld nicht im Formular: Konfiguration unverändert lassen */ }
+    else if (regOn) v.regularity = reg;
+    else delete v.regularity;
+    if (v.mode !== "heatmap" || !REGULARITY_STATISTICS.includes(resolveStatistic(v.statistic, kind))) delete v.regularity;
     if (!v.compare || v.compare === "none") { delete v.compare_colors; delete v.difference_colors; }
     if (v.mode !== "heatmap" || v.difference === false) delete v.difference_colors;
     if (v.mode === "heatmap") delete v.compare_colors;
@@ -2160,4 +2313,5 @@ if (window.__PATTERN_CARD_TEST__) window.__patternCard = {
   dayValues, cumulate, quantile, slotStats, computeModel, cssColor, defaultColor, parseRgb, interpolateStops,
   makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND, bandsFor, dateKey, inGroup,
   axisFractionDigits, niceInterval, makeAxisFormatter, periodPlan, buildDaysFor,
+  regularityConfig, isRegular, slotRegularity,
 };

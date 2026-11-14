@@ -153,11 +153,30 @@ const motionEntries = (start, end) => {
   return out;
 };
 
+// Waschmaschine: samstags meist gegen 10:30, mittwochs abends ab und zu, sonst selten
+const washerEntries = (start, end) => {
+  const out = [{ s: "off", lu: start / 1000 }];
+  for (let day = Math.floor(start / 864e5) - 1; day * 864e5 < end; day++) {
+    const t = day * 864e5;
+    const wd = weekdayAt(t + 12 * H);
+    const off = -P.tzOffset(t + 12 * H, TZ);
+    const at = (h) => t + off + h * H;
+    const runs = [];
+    if (wd === 5 && rnd(day * 1.37) < 0.8) runs.push(at(10.2 + rnd(day * 2.1) * 0.7));
+    if (wd === 2 && rnd(day * 4.11) < 0.45) runs.push(at(18 + rnd(day * 3.3) * 2));
+    if (rnd(day * 6.7) < 0.15) runs.push(at(8 + rnd(day * 5.9) * 12));
+    for (const r of runs.sort((a, b) => a - b)) {
+      if (r >= start && r < end) out.push({ s: "on", lu: r / 1000 }, { s: "off", lu: Math.min(end, r + 1.6 * H) / 1000 });
+    }
+  }
+  return out;
+};
 const states = {
   "sensor.leistung": { entity_id: "sensor.leistung", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
   "sensor.zaehler": { entity_id: "sensor.zaehler", state: "12345", attributes: { friendly_name: L("Stromzähler", "Grid energy"), unit_of_measurement: "kWh", state_class: "total_increasing", device_class: "energy" } },
   "sensor.leistung_neu": { entity_id: "sensor.leistung_neu", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
   "binary_sensor.therme": { entity_id: "binary_sensor.therme", state: "off", attributes: { friendly_name: L("Therme Brenner", "Boiler burner"), device_class: "running" } },
+  "binary_sensor.waschmaschine": { entity_id: "binary_sensor.waschmaschine", state: "off", attributes: { friendly_name: L("Waschmaschine", "Washing machine"), device_class: "running" } },
   "binary_sensor.bewegung": { entity_id: "binary_sensor.bewegung", state: "off", attributes: { friendly_name: L("Bewegung Gäste-WC", "Guest toilet motion"), device_class: "motion" } },
 };
 
@@ -187,7 +206,7 @@ const hass = {
       }
       return { [id]: rows };
     }
-    if (msg.type === "history/history_during_period") return { [id]: id === "binary_sensor.therme" ? boilerEntries(s, e) : motionEntries(s, e) };
+    if (msg.type === "history/history_during_period") return { [id]: id === "binary_sensor.therme" ? boilerEntries(s, e) : id === "binary_sensor.waschmaschine" ? washerEntries(s, e) : motionEntries(s, e) };
     return null;
   },
 };
@@ -204,9 +223,14 @@ const configs = [
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, compare: "weekday_weekend", name: L("Belegung Werktage/Wochenende", "Occupancy: workdays vs. weekend") },
   { type: "custom:pattern-card", entity: "binary_sensor.therme", mode: "heatmap", days: 28, statistic: "events", compare: "before_after", since: SINCE, difference_colors: ["green", "red"], name: L("Brennerstarts vorher/nachher", "Boiler starts: before vs. after") },
   { type: "custom:pattern-card", entity: "sensor.leistung_neu", mode: "heatmap", days: 56, compare: "recent", recent_days: 7, color: "amber", name: L("Letzte Woche gegen die 8 Wochen davor", "Last week vs. the eight weeks before") },
+  { type: "custom:pattern-card", entity: "binary_sensor.waschmaschine", mode: "heatmap", days: 56, statistic: "events", regularity: { enabled: true, threshold: 70 }, name: L("Waschmaschine: regelmäßige Starts", "Washing machine: recurring starts") },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, regularity: { enabled: true, threshold: 80, color: "purple" }, name: L("Gäste-WC: regelmäßig genutzt", "Guest toilet: regularly used") },
 ];
 
-const yaml = (c) => Object.entries(c).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}`).join("\n");
+const yamlVal = (v) => (Array.isArray(v) ? `[${v.join(", ")}]` : v);
+const yaml = (c) => Object.entries(c).map(([k, v]) => (v && typeof v === "object" && !Array.isArray(v)
+  ? `${k}:\n${Object.entries(v).map(([k2, v2]) => `  ${k2}: ${yamlVal(v2)}`).join("\n")}`
+  : `${k}: ${yamlVal(v)}`)).join("\n");
 const cards = [];
 for (const c of configs) {
   const slot = document.createElement("div");
