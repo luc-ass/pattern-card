@@ -171,7 +171,29 @@ const washerEntries = (start, end) => {
   }
   return out;
 };
+// Werkstatt: Licht freitags meist 22–2 Uhr (über Mitternacht), sonntags oft 23–1 Uhr (Sonntag auf Montag)
+const workshopEntries = (start, end) => {
+  const out = [{ s: "off", lu: start / 1000 }];
+  for (let day = Math.floor(start / 864e5) - 1; day * 864e5 < end; day++) {
+    const t = day * 864e5;
+    const wd = weekdayAt(t + 12 * H);
+    const at = (h) => t - P.tzOffset(t + 12 * H, TZ) + h * H;
+    const runs = [];
+    if (wd === 4 && rnd(day * 1.91) < 0.85) runs.push([at(21.9 + rnd(day * 2.3) * 0.15), at(26.2 + rnd(day * 1.1) * 0.6)]);
+    if (wd === 6 && rnd(day * 2.77) < 0.8) runs.push([at(23 + rnd(day * 3.9) * 0.2), at(25.1 + rnd(day * 4.4) * 0.5)]);
+    if (rnd(day * 8.3) < 0.12) runs.push([at(15 + rnd(day * 7.1) * 3), at(16.5 + rnd(day * 7.1) * 3)]);
+    for (const [a, b] of runs) if (b > start && a < end) out.push({ s: "on", lu: Math.max(a, start) / 1000 }, { s: "off", lu: Math.min(end, b) / 1000 });
+  }
+  return out.sort((x, y) => x.lu - y.lu);
+};
+// Neuer Bewegungsmelder: Verlauf erst seit 4 Tagen, davor keine Daten (Diagonale)
+const NEW_SINCE = Date.now() - 4 * 864e5 - 5 * H;
+// Leistung mit Messlücke: jede Nacht 1–5 Uhr ohne Werte (Gerät aus), Graph mit grauem Hintergrund
+const gapHour = (t) => { const h = localHour(t); return h >= 1 && h < 5; };
 const states = {
+  "binary_sensor.werkstatt": { entity_id: "binary_sensor.werkstatt", state: "off", attributes: { friendly_name: L("Licht Werkstatt", "Workshop light"), device_class: "light" } },
+  "binary_sensor.bewegung_neu": { entity_id: "binary_sensor.bewegung_neu", state: "off", attributes: { friendly_name: L("Bewegung Flur (neu)", "Hallway motion (new)"), device_class: "motion" } },
+  "sensor.leistung_luecke": { entity_id: "sensor.leistung_luecke", state: "120", attributes: { friendly_name: L("Leistung Werkbank", "Workbench power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
   "sensor.leistung": { entity_id: "sensor.leistung", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
   "sensor.zaehler": { entity_id: "sensor.zaehler", state: "12345", attributes: { friendly_name: L("Stromzähler", "Grid energy"), unit_of_measurement: "kWh", state_class: "total_increasing", device_class: "energy" } },
   "sensor.leistung_neu": { entity_id: "sensor.leistung_neu", state: "642", attributes: { friendly_name: L("Strom Netzbezug", "Grid power"), unit_of_measurement: "W", state_class: "measurement", device_class: "power" } },
@@ -191,7 +213,7 @@ const hass = {
     const e = Math.min(Date.parse(msg.end_time), Date.now());
     const id = (msg.statistic_ids || msg.entity_ids)[0];
     if (msg.type === "recorder/get_statistics_metadata") {
-      if (id === "sensor.leistung" || id === "sensor.leistung_neu") return [{ statistic_id: id, has_sum: false, mean_type: 1, unit_class: "power" }];
+      if (id === "sensor.leistung" || id === "sensor.leistung_neu" || id === "sensor.leistung_luecke") return [{ statistic_id: id, has_sum: false, mean_type: 1, unit_class: "power" }];
       if (id === "sensor.zaehler") return [{ statistic_id: id, has_sum: true, mean_type: 0, unit_class: "energy" }];
       return [];
     }
@@ -200,12 +222,15 @@ const hass = {
       const rows = [];
       for (let t = Math.ceil(s / step) * step; t + step <= e; t += step) {
         let m = 0;
+        if (id === "sensor.leistung_luecke" && gapHour(t)) continue;
         const f = id === "sensor.leistung_neu" ? powerNew : power;
         for (let u = t; u < t + step; u += 300e3) m += f(u) / (step / 300e3);
         rows.push(id === "sensor.zaehler" ? { start: t, end: t + step, change: (m * step) / H / 1000 } : { start: t, end: t + step, mean: m });
       }
       return { [id]: rows };
     }
+    if (msg.type === "history/history_during_period" && id === "binary_sensor.werkstatt") return { [id]: workshopEntries(s, e) };
+    if (msg.type === "history/history_during_period" && id === "binary_sensor.bewegung_neu") return { [id]: e > NEW_SINCE ? motionEntries(Math.max(s, NEW_SINCE), e) : [] };
     if (msg.type === "history/history_during_period") return { [id]: id === "binary_sensor.therme" ? boilerEntries(s, e) : id === "binary_sensor.waschmaschine" ? washerEntries(s, e) : motionEntries(s, e) };
     return null;
   },
@@ -228,6 +253,10 @@ const configs = [
   { type: "custom:pattern-card", entity: "sensor.leistung_neu", mode: "heatmap", days: 56, compare: "recent", recent_days: 7, color: "amber", name: L("Letzte Woche gegen die 8 Wochen davor", "Last week vs. the eight weeks before") },
   { type: "custom:pattern-card", entity: "binary_sensor.waschmaschine", mode: "heatmap", days: 56, statistic: "events", regularity: { enabled: true, threshold: 70 }, name: L("Waschmaschine: regelmäßige Starts", "Washing machine: recurring starts") },
   { type: "custom:pattern-card", entity: "binary_sensor.bewegung", mode: "heatmap", days: 28, regularity: { enabled: true, threshold: 80, color: "purple" }, name: L("Gäste-WC: regelmäßig genutzt", "Guest toilet: regularly used") },
+  { type: "custom:pattern-card", entity: "binary_sensor.werkstatt", mode: "heatmap", days: 56, statistic: "active", regularity: { enabled: true, threshold: 70 }, color: "amber", name: L("Werkstatt: Freitagnacht über Mitternacht", "Workshop: Friday night across midnight") },
+  { type: "custom:pattern-card", entity: "binary_sensor.werkstatt", mode: "heatmap", days: 56, statistic: "active", weekdays: ["fri", "sun"], regularity: { enabled: true, threshold: 70 }, color: "amber", name: L("Werkstatt: nur Fr und So (ohne Übergang)", "Workshop: Fri and Sun only (no crossing)") },
+  { type: "custom:pattern-card", entity: "binary_sensor.bewegung_neu", mode: "heatmap", days: 28, statistic: "events", name: L("Neuer Melder: fehlende Daten", "New sensor: missing data") },
+  { type: "custom:pattern-card", entity: "sensor.leistung_luecke", mode: "graph", days: 14, name: L("Werkbank: nachts keine Daten", "Workbench: no data at night") },
 ];
 
 const yamlVal = (v) => (Array.isArray(v) ? `[${v.join(", ")}]` : v);

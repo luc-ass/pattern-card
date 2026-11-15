@@ -1192,7 +1192,7 @@ const withNow = async (ts, fn) => {
   w.Date.now = () => ts;
   try { await fn(); } finally { w.Date.now = orig; }
 };
-const washerHass = () => {
+const washerHass = (since = 0) => {
   const entries = [];
   const now = WASHER_NOW;
   const tz = TZ;
@@ -1211,8 +1211,10 @@ const washerHass = () => {
     { "binary_sensor.wasche": { entity_id: "binary_sensor.wasche", state: "off", attributes: { friendly_name: "Waschmaschine", device_class: "running" } } },
     (msg) => {
       if (msg.type === "recorder/get_statistics_metadata") return [];
-      const s = Date.parse(msg.start_time) / 1000;
+      // since: Verlauf erst ab diesem Zeitpunkt (davor keine Daten)
+      const s = Math.max(Date.parse(msg.start_time), since) / 1000;
       const e = Date.parse(msg.end_time) / 1000;
+      if (s >= e) return { "binary_sensor.wasche": [] };
       // wie HA: Zustand zu Beginn des Abschnitts zuerst
       const before = entries.filter((x) => x.lu < s).pop();
       return { "binary_sensor.wasche": [...(before ? [{ ...before, lu: s }] : []), ...entries.filter((x) => x.lu >= s && x.lu < e)] };
@@ -1239,7 +1241,10 @@ test("Karte heatmap: Rahmen für regelmäßige Ereignisse, Füllfarbe unverände
   assert.equal(reg[0].dataset.r, "5");
   assert.equal(reg[0].dataset.k, "10");
   assert.ok(el.shadowRoot.querySelector(".legend .regular"));
-  assert.match(el.shadowRoot.querySelector(".legend").textContent, /an mind\. 70 % der Tage/);
+  assert.match(el.shadowRoot.querySelector(".legend").textContent, /^Regelmäßigkeit \(70 %\)/);
+  // ein Rahmen über der einen Zelle, gültige Nullwerte ohne Diagonale
+  assert.deepEqual([...el.shadowRoot.querySelectorAll(".reg-run")].map((x) => x.style.gridColumn.replace(/\s/g, "")), ["12/13"]);
+  assert.equal(el.shadowRoot.querySelectorAll(".cell.nodata").length, 0);
   reg[0].dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
   const tip = el.shadowRoot.querySelector(".tooltip").textContent;
   assert.match(tip, /Ereignisse: 0,8 Ereignisse/);
@@ -1268,6 +1273,12 @@ test("Karte heatmap: Rahmen für regelmäßige Ereignisse, Füllfarbe unverände
   await flush(20);
   const act = cellsOf(el).filter((c) => c.classList.contains("regular")).map((c) => `${c.dataset.r}/${c.dataset.k}`);
   assert.deepEqual(act, ["5/10", "5/11"]);
+  // zwei benachbarte Zellen: ein gemeinsamer Rahmen, beide Enden geschlossen
+  const runs = [...el.shadowRoot.querySelectorAll(".reg-run")];
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].style.gridRow, "6");
+  assert.equal(runs[0].style.gridColumn.replace(/\s/g, ""), "12/14");
+  assert.ok(!runs[0].classList.contains("open-start") && !runs[0].classList.contains("open-end"));
   cellsOf(el).find((c) => c.dataset.r === "5" && c.dataset.k === "11").dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
   assert.match(el.shadowRoot.querySelector(".tooltip").textContent, /Aktiv an 6 von 8 Samstagen/);
   plain.remove();
@@ -1331,6 +1342,200 @@ test("Editor: Regelmäßigkeit nur bei Heatmap mit Ereignissen oder Anteil aktiv
   form.dispatchEvent(new w.CustomEvent("value-changed", { detail: { value: { ...ed.querySelector("ha-form").data, mode: "graph" } } }));
   assert.equal(out.regularity, undefined);
 });
+
+
+/* ---- 0.11.0: zusammenhängende Rahmen, fehlende Daten, Legende, Tastatur ---- */
+
+/** Zeilen für regularRuns: je Wochentag die regelmäßigen Slots (24 Slots) */
+const runRows = (spec, extra = {}) => Object.entries(spec).map(([wd, ks]) => ({
+  weekday: Number(wd), weekdays: new Set([Number(wd)]), ...extra,
+  cells: Array.from({ length: 24 }, (_, k) => ({ n: 8, value: 1, reg: ks.includes(k) ? { valid: 8, hits: 8 } : { valid: 8, hits: 0 } })),
+}));
+const RC = { threshold: 70, minSamples: 4 };
+const runsOf = (rows) => [...P.regularRuns(rows, RC, 24)].map((r) => `${r.ri}:${r.k0}-${r.k1}${r.openStart ? "<" : ""}${r.openEnd ? ">" : ""}`);
+
+test("regularRuns: einzelne Zelle, Lauf, Unterbrechung", () => {
+  assert.deepEqual(runsOf(runRows({ 0: [5] })), ["0:5-5"]);
+  assert.deepEqual(runsOf(runRows({ 0: [8, 9, 10] })), ["0:8-10"], "Mo 8–11 Uhr: ein Rahmen");
+  assert.deepEqual(runsOf(runRows({ 0: [8, 9, 11, 12, 13] })), ["0:8-9", "0:11-13"], "Lücke trennt");
+  assert.deepEqual(runsOf(runRows({ 0: [] })), []);
+  assert.equal(P.regularRuns(runRows({ 0: [1] }), null, 24).length, 0, "ohne Option keine Rahmen");
+  // zu wenige Tage: nicht regelmäßig, also kein Rahmen
+  const few = runRows({ 0: [3, 4] });
+  few[0].cells[3].reg = { valid: 3, hits: 3 };
+  assert.deepEqual(runsOf(few), ["0:4-4"]);
+});
+
+test("regularRuns: Mitternacht offen nur zwischen aufeinanderfolgenden Wochentagen", () => {
+  // Werkstatt: Freitag 22 bis Samstag 02 Uhr
+  assert.deepEqual(runsOf(runRows({ 4: [22, 23], 5: [0, 1] })), ["0:22-23>", "1:0-1<"]);
+  // Sonntag auf Montag: Montag ist die erste Zeile, Sonntag die letzte
+  assert.deepEqual(runsOf(runRows({ 0: [0, 1], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [23] })), ["0:0-1<", "6:23-23>"]);
+  // Samstag auf Sonntag
+  assert.deepEqual(runsOf(runRows({ 5: [23], 6: [0] })), ["0:23-23>", "1:0-0<"]);
+  // letzte Zelle ohne regelmäßigen Nachbarn am Folgetag bzw. erste ohne am Vortag
+  assert.deepEqual(runsOf(runRows({ 4: [23], 5: [1] })), ["0:23-23", "1:1-1"]);
+  assert.deepEqual(runsOf(runRows({ 4: [20], 5: [0] })), ["0:20-20", "1:0-0"]);
+  // nicht aufeinanderfolgend (gefiltert Mo und Do): keine Verbindung
+  assert.deepEqual(runsOf(runRows({ 0: [0], 3: [23] })), ["0:0-0", "1:23-23"]);
+  // Folgetag herausgefiltert: Freitag allein bleibt zu
+  assert.deepEqual(runsOf(runRows({ 4: [23] })), ["0:23-23"]);
+  // ganzer Tag regelmäßig, Vor- und Folgetag auch: beide Enden offen
+  const all = Array.from({ length: 24 }, (_, k) => k);
+  assert.deepEqual(runsOf(runRows({ 0: all, 1: all, 2: all })), ["0:0-23>", "1:0-23<>", "2:0-23<"]);
+});
+
+test("regularRuns: Vergleichsgruppen ohne Tagesübergänge", () => {
+  // Gruppen aus je einem Tag (Fr gegen Sa) sind keine Wochentagszeilen
+  const g = runRows({ 4: [23], 5: [0] }, { group: true });
+  assert.deepEqual(runsOf(g), ["0:23-23", "1:0-0"]);
+  // Werktage gegen Wochenende
+  const rows = [
+    { key: "workday", group: true, weekdays: new Set([0, 1, 2, 3, 4]), cells: runRows({ 0: [23] })[0].cells },
+    { key: "weekend", group: true, weekdays: new Set([5, 6]), cells: runRows({ 0: [0] })[0].cells },
+  ];
+  assert.deepEqual(runsOf(rows), ["0:23-23", "1:0-0"]);
+  // Vorher/Nachher und Zeilen über einen Filter (weekday undefined)
+  assert.deepEqual(runsOf([{ key: "before", group: true, weekdays: new Set([4]), cells: rows[0].cells }, { key: "after", group: true, weekdays: new Set([5]), cells: rows[1].cells }]), ["0:23-23", "1:0-0"]);
+});
+
+test("Karte heatmap: fehlende Daten mit Diagonale, gültige Nullwerte ohne", () => withNow(WASHER_NOW, async () => {
+  // Verlauf erst ab Montag 16.11. 08:00 (WASHER_NOW = Mi 18.11. 08:00)
+  const since = P.wallToTs(2026, 11, 16, 8, 0, TZ);
+  const { hass } = washerHass(since);
+  const el = mount({ type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 56 }, hass);
+  await flush(30);
+  const root = el.shadowRoot;
+  const cell = (r, k) => root.querySelector(`.cell[data-r="${r}"][data-k="${k}"]`);
+  assert.ok(cell(0, 3), "Heatmap gezeichnet");
+  // Donnerstag: keine Daten in keinem Slot
+  for (let k = 0; k < 24; k++) assert.ok(cell(3, k).classList.contains("nodata"), `Do ${k}`);
+  // Montag: vor 8 Uhr keine Daten, danach gültige Nullwerte (keine Ereignisse)
+  assert.ok(cell(0, 3).classList.contains("nodata"));
+  assert.ok(!cell(0, 10).classList.contains("nodata"));
+  assert.match(cell(0, 10).getAttribute("style"), /background:/, "Nullwert hat die unterste Farbe");
+  assert.ok(!/background:/.test(cell(0, 3).getAttribute("style")));
+  // Tooltip: fehlende Daten als solche benannt, Nullwert mit Stichprobe
+  cell(0, 3).dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(root.querySelector(".tooltip").textContent, /Ereignisse: –keine Daten$/);
+  cell(0, 10).dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(root.querySelector(".tooltip").textContent, /Ereignisse: 0 Ereignisse ?Ø aus 1 Tagen/);
+  // mit Regelmäßigkeit: Zelle ohne Daten ohne Zeilen zur Regelmäßigkeit, wenige Daten ohne Rahmen
+  el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 56, regularity: true });
+  await flush(30);
+  cell(3, 3).dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.doesNotMatch(root.querySelector(".tooltip").textContent, /Regelmäßigkeit/);
+  cell(0, 10).dispatchEvent(new w.MouseEvent("pointerover", { bubbles: true }));
+  assert.match(root.querySelector(".tooltip").textContent, /zu wenige Tage für den Rahmen/);
+  assert.equal(root.querySelectorAll(".reg-run").length, 0);
+  // Differenzzeile im Vergleich: fehlt eine Seite, ebenfalls Diagonale
+  el.setConfig({ type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 56, weekdays: ["mon", "tue", "wed", "thu", "fri"], weekdays_b: ["sat", "sun"] });
+  await flush(30);
+  // Wochenende ohne Daten: Gruppe entfällt, keine leere Zeile, keine Differenz
+  assert.equal(root.querySelectorAll(".cell.diff").length, 0);
+  el.remove();
+}));
+
+test("Graph: Hintergrund nur in Bereichen ohne jeden Referenzwert", () => {
+  const now = P.wallToTs(2026, 11, 12, 12, 0, TZ);
+  // Referenz nur 6–18 Uhr, an einem Tag (wenige Daten) zusätzlich 20 Uhr
+  const days = P.buildDays(now, 14, TZ, 60);
+  for (const d of days) {
+    for (let k = 0; k < 24; k++) {
+      if (d.b[k] >= now) break;
+      const has = (k >= 6 && k < 18) || (k === 20 && d.ymd.d === 5) || d.isToday;
+      if (has) P.accumulateStats([d], [{ start: d.b[k], end: d.b[k + 1], mean: 10 + k }], "mean", "hour");
+    }
+  }
+  const m = P.computeModel(days, { statistic: "mean", now, mode: "graph", groups: [{ key: "reference", weekdays: new Set([0, 1, 2, 3, 4, 5, 6]) }] });
+  assert.deepEqual([...P.noDataRanges(m.references, 24)].map((r) => [...r]), [[0, 5], [18, 19], [21, 23]]);
+  assert.equal(m.references[0].stats[20].n, 1, "ein Tag reicht, keine Markierung");
+  const ctx = {
+    colors: { today: "#00f", refs: { reference: "#888" }, noData: "rgba(0,0,0,0.08)" },
+    label: { today: "Heute", refs: { reference: "Referenz (Ø)" }, bandName: (r, key) => key, daysN: (n) => `${n}`, daysShort: (n) => `${n}`, wideNeedsDays: (n) => `ab ${n}` },
+    fmtNumber: (x) => String(Math.round(x)), fmtTime: () => "t", unit: "W",
+  };
+  const g = P.buildGraph(m, ctx);
+  const nd = g.data.find((x) => x.id === "nodata");
+  assert.ok(nd, "Serie für fehlende Daten");
+  assert.equal(nd.type, "custom");
+  assert.equal(nd.z, 0, "unter Bändern (z 1) und Linien");
+  assert.equal(nd.silent, true);
+  const b = m.today.b;
+  assert.deepEqual([...nd.data].map((x) => [...x]), [[b[0], b[6]], [b[18], b[20]], [b[21], b[24]]]);
+  assert.ok(!g.options.legend.data.some((x) => x.id === "nodata"), "nicht in der Legende");
+  // Zeichnen: Rechteck über die volle Höhe der Fläche, Breite aus der Zeitachse
+  const rect = nd.renderItem({ coordSys: { x: 10, y: 5, width: 240, height: 100 } }, { value: (i) => nd.data[1][i], coord: ([x]) => [10 + ((x - b[0]) / (b[24] - b[0])) * 240, 0] });
+  assert.equal(rect.type, "rect");
+  assert.equal(rect.shape.y, 5);
+  assert.equal(rect.shape.height, 100);
+  assert.equal(Math.round(rect.shape.x), 190);
+  assert.equal(Math.round(rect.shape.width), 20);
+  assert.equal(rect.style.fill, "rgba(0,0,0,0.08)");
+  // Tooltip ignoriert die Serie, Werte und Bänder unverändert
+  const ref = g.data.find((x) => x.id === "ref-reference").data;
+  assert.ok(g.options.tooltip.formatter([{ seriesId: "nodata", value: nd.data[0] }, { seriesId: "ref-reference", value: ref[8] }]).textContent.startsWith("t – t"));
+  const plain = P.buildGraph(P.computeModel(filledDays(now, 14, (d, k) => k), { statistic: "mean", now, mode: "graph", groups: [{ key: "reference", weekdays: new Set([0, 1, 2, 3, 4, 5, 6]) }] }), ctx);
+  assert.ok(!plain.data.some((x) => x.id === "nodata"), "volle Daten: keine Markierung");
+  // die Zukunft von heute allein markiert nichts: Referenz hat dort Werte
+  assert.equal(P.noDataRanges(plain.refs.map((r) => r.ref), 24).length, 0);
+});
+
+test("Legende: nur „Regelmäßigkeit (70 %)“, Englisch, Editor gleich benannt", () => withNow(WASHER_NOW, async () => {
+  const { hass } = washerHass();
+  hass.locale = { ...hass.locale, language: "en" };
+  hass.language = "en";
+  const el = mount({ type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 56, regularity: { threshold: 65 } }, hass);
+  await flush(20);
+  assert.equal(el.shadowRoot.querySelector(".legend .reg-text").textContent, "Regularity (65%)");
+  el.remove();
+  const t = (k) => k;
+  assert.ok(P.editorSchema({ mode: "heatmap" }, "state", t).some((f) => f.name === "regularity_enabled"));
+}));
+
+test("Tastatur: Raster fokussierbar, Pfeiltasten zeigen Zellen, Escape und Verlassen blenden aus", () => withNow(WASHER_NOW, async () => {
+  const { hass } = washerHass();
+  const el = mount({ type: "custom:pattern-card", entity: "binary_sensor.wasche", mode: "heatmap", statistic: "events", days: 56, weekdays: ["mon", "tue", "wed", "thu", "fri"], weekdays_b: ["sat", "sun"] }, hass);
+  await flush(20);
+  const root = el.shadowRoot;
+  const grid = root.querySelector(".content > .heatmap");
+  const tip = root.querySelector(".tooltip");
+  assert.equal(grid.tabIndex, 0);
+  assert.ok(grid.getAttribute("aria-label"));
+  assert.equal(tip.getAttribute("role"), "status");
+  const key = (k) => grid.dispatchEvent(new w.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const hovered = () => { const c = root.querySelector(".cell.hover"); return c ? `${c.dataset.r}/${c.dataset.k}` : null; };
+  key("ArrowRight");
+  assert.equal(hovered(), "0/0", "erste Taste zeigt die erste Zelle");
+  assert.equal(tip.hidden, false);
+  key("ArrowRight"); key("ArrowRight");
+  assert.equal(hovered(), "0/2");
+  key("End");
+  assert.equal(hovered(), "0/23");
+  key("ArrowRight");
+  assert.equal(hovered(), "0/23", "am Rand stehen bleiben");
+  key("ArrowDown");
+  assert.equal(hovered(), "1/23");
+  key("ArrowDown");
+  assert.equal(hovered(), "diff/23", "Differenzzeile erreichbar");
+  assert.match(tip.textContent, /Δ|−/);
+  key("ArrowDown");
+  assert.equal(hovered(), "diff/23");
+  key("Home");
+  assert.equal(hovered(), "diff/0");
+  key("ArrowUp"); key("ArrowUp"); key("ArrowUp");
+  assert.equal(hovered(), "0/0");
+  assert.equal(key("Escape"), false, "Escape verbraucht");
+  assert.equal(tip.hidden, true);
+  assert.equal(hovered(), null);
+  key("Enter");
+  assert.equal(hovered(), "0/0", "Enter zeigt die zuletzt gewählte Zelle wieder");
+  grid.dispatchEvent(new w.FocusEvent("blur"));
+  assert.equal(tip.hidden, true);
+  // andere Tasten bleiben frei (Tab)
+  assert.equal(key("Tab"), true);
+  el.remove();
+}));
 
 for (const [name, fn] of tests) {
   try {

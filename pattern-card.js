@@ -14,7 +14,7 @@
  * Lizenz: MIT
  */
 
-const CARD_VERSION = "0.10.0";
+const CARD_VERSION = "0.11.0";
 
 console.info(
   `%c PATTERN-CARD %c ${CARD_VERSION} `,
@@ -83,6 +83,8 @@ const I18N = {
     days_n: "{n} days",
     days_of: "data from {n} of {total} days",
     avg_of_days: "avg of {n} days",
+    no_data_slot: "no data",
+    heatmap_keys: "Heatmap, arrow keys show the values",
     loading: "Loading data …",
     no_data: "No data in this period",
     entity_missing: "Entity not available: {id}",
@@ -180,11 +182,11 @@ const I18N = {
     regularity_events_on: "Event on {hits} of {n} {days}",
     regularity_active_on: "Active on {hits} of {n} {days}",
     regularity_too_few: "too few days for the border (at least {min})",
-    regularity_legend: "at least {threshold} % of days",
+    regularity_legend: "Regularity ({threshold}%)",
     days_plural: "days",
     wd_plural_0: "Mondays", wd_plural_1: "Tuesdays", wd_plural_2: "Wednesdays", wd_plural_3: "Thursdays",
     wd_plural_4: "Fridays", wd_plural_5: "Saturdays", wd_plural_6: "Sundays",
-    regularity_enabled: "Highlight recurring events",
+    regularity_enabled: "Highlight regularity",
     regularity_threshold: "Minimum occurrence rate (%)",
     regularity_color: "Border color",
     regularity_min_samples: "Minimum reference days",
@@ -204,6 +206,8 @@ const I18N = {
     days_n: "{n} Tage",
     days_of: "Daten aus {n} von {total} Tagen",
     avg_of_days: "Ø aus {n} Tagen",
+    no_data_slot: "keine Daten",
+    heatmap_keys: "Heatmap, Pfeiltasten zeigen die Werte",
     loading: "Lade Daten …",
     no_data: "Keine Daten im Zeitraum",
     entity_missing: "Entity nicht verfügbar: {id}",
@@ -300,11 +304,11 @@ const I18N = {
     regularity_events_on: "Ereignis an {hits} von {n} {days}",
     regularity_active_on: "Aktiv an {hits} von {n} {days}",
     regularity_too_few: "zu wenige Tage für den Rahmen (mind. {min})",
-    regularity_legend: "an mind. {threshold} % der Tage",
+    regularity_legend: "Regelmäßigkeit ({threshold} %)",
     days_plural: "Tagen",
     wd_plural_0: "Montagen", wd_plural_1: "Dienstagen", wd_plural_2: "Mittwochen", wd_plural_3: "Donnerstagen",
     wd_plural_4: "Freitagen", wd_plural_5: "Samstagen", wd_plural_6: "Sonntagen",
-    regularity_enabled: "Regelmäßige Ereignisse hervorheben",
+    regularity_enabled: "Regelmäßigkeit hervorheben",
     regularity_threshold: "Mindesthäufigkeit (%)",
     regularity_color: "Rahmenfarbe",
     regularity_min_samples: "Mindestanzahl Referenztage",
@@ -514,6 +518,38 @@ const regularityConfig = (cfg, statistic) => {
 
 /** Regelmäßigkeit einer Zelle {valid, hits} ab Schwelle und Mindestzahl der Tage markieren? */
 const isRegular = (reg, rc) => !!reg && !!rc && reg.valid > 0 && reg.valid >= rc.minSamples && reg.hits * 100 >= rc.threshold * reg.valid;
+
+/**
+ * Zusammenhängende Rahmen der Regelmäßigkeit: je Zeile Läufe benachbarter regelmäßiger Slots.
+ * An Mitternacht bleibt ein Lauf offen (openEnd/openStart), wenn die Zeile genau einen Wochentag
+ * zeigt, die Zeile des Folgetags (bzw. Vortags) ebenfalls in der Heatmap steht und deren erster
+ * (bzw. letzter) Slot regelmäßig ist. Gruppenzeilen und gefilterte Tage ohne Nachbarn bleiben zu.
+ */
+const regularRuns = (rows, rc, S) => {
+  if (!rc) return [];
+  const regAt = (row, k) => !!row && isRegular(row.cells[k]?.reg, rc);
+  const byDay = new Map();
+  rows.forEach((row) => { if (row.weekday !== undefined && !row.group) byDay.set(row.weekday, row); });
+  const runs = [];
+  rows.forEach((row, ri) => {
+    const single = row.weekday !== undefined && !row.group;
+    const next = single ? byDay.get((row.weekday + 1) % 7) : null;
+    const prev = single ? byDay.get((row.weekday + 6) % 7) : null;
+    let k = 0;
+    while (k < S) {
+      if (!regAt(row, k)) { k++; continue; }
+      const k0 = k;
+      while (k + 1 < S && regAt(row, k + 1)) k++;
+      runs.push({
+        ri, k0, k1: k,
+        openStart: k0 === 0 && regAt(prev, S - 1),
+        openEnd: k === S - 1 && regAt(next, 0),
+      });
+      k++;
+    }
+  });
+  return runs;
+};
 
 /* --------------------------------------------------------------------------
  * Zeitzonen und Tagesraster
@@ -1114,6 +1150,18 @@ const bandsFor = (mode = "both", n, multi) => {
   return { bands: wideOk ? [WIDE, IQR] : [IQR], wideDropped: !wideOk };
 };
 
+/** Läufe [k0, k1] von Slots, in denen keine Referenz einen Wert hat (fehlende Daten, nicht wenige) */
+const noDataRanges = (references, S) => {
+  const out = [];
+  let start = -1;
+  for (let k = 0; k <= S; k++) {
+    const empty = k < S && references.every((r) => !(r.stats[k]?.n > 0));
+    if (empty && start < 0) start = k;
+    if (!empty && start >= 0) { out.push([start, k - 1]); start = -1; }
+  }
+  return out;
+};
+
 /**
  * Baut data/options für ha-chart-base.
  * ctx: { colors: {today, refs: {key: color}}, label: {today, refs: {key}, bandName(ref, mode), daysN},
@@ -1167,6 +1215,25 @@ const buildGraph = (model, ctx) => {
     return { ref, bands: shown, wideDropped, color, name };
   });
 
+  // Zeitbereiche ohne einen einzigen Referenzwert: sehr dezenter grauer Hintergrund, unter
+  // allen Linien und Bändern; ändert weder Werte noch Achsen (nur x kodiert)
+  const gaps = noDataRanges(references, S);
+  if (gaps.length && references.length) {
+    series.push({
+      id: "nodata", name: "", type: "custom", silent: true, z: 0,
+      tooltip: { show: false },
+      dimensions: ["from", "to"],
+      encode: { x: [0, 1], tooltip: [] },
+      data: gaps.map(([k0, k1]) => [b[k0], b[k1 + 1]]),
+      renderItem: (params, api) => {
+        const cs = params.coordSys;
+        const x0 = Math.max(cs.x, api.coord([api.value(0), 0])[0]);
+        const x1 = Math.min(cs.x + cs.width, api.coord([api.value(1), 0])[0]);
+        return { type: "rect", silent: true, shape: { x: x0, y: cs.y, width: Math.max(0, x1 - x0), height: cs.height }, style: { fill: ctx.colors.noData || "rgba(128,128,128,0.08)" } };
+      },
+    });
+  }
+
   const todayData = start.concat(todayVals.map((v, k) => [xOf(k), v]));
   let last = todayData.length - 1;
   while (last >= 0 && todayData[last][1] == null) last--;
@@ -1187,7 +1254,7 @@ const buildGraph = (model, ctx) => {
 
   const tooltipFormatter = (params) => {
     const list = Array.isArray(params) ? params : [params];
-    const p = list.find((x) => x && Array.isArray(x.value));
+    const p = list.find((x) => x && x.seriesId !== "nodata" && Array.isArray(x.value));
     if (!p) return null;
     const k = slotOfX.get(p.value[0]);
     if (k === undefined) return null;
@@ -1350,11 +1417,40 @@ const STYLE = `
     background: var(--secondary-background-color);
   }
   .has-rows .cell { height: 100%; min-height: 4px; }
+  .content > .heatmap:focus { outline: none; }
+  .content > .heatmap:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; border-radius: 4px; }
   .cell.hover { outline: 2px solid var(--primary-text-color); outline-offset: -1px; }
   /* Regelmäßigkeit: Rahmen innen in der vollen Farbe der Skala (oder color), dahinter
      eine feine Linie in der Kartenfarbe, die ihn von der Füllung trennt.
      Ändert weder Füllfarbe noch Größe */
-  .cell.regular, .legend .regular, .tooltip .marker.regular {
+  /* Rahmen über einem Lauf benachbarter regelmäßiger Zellen (eigenes Element im Raster, über
+     den Lücken durchgehend); an Mitternacht zum Nachbartag offen */
+  .reg-run {
+    position: relative; pointer-events: none; box-sizing: border-box;
+    height: var(--pattern-card-cell-height, 16px);
+    border: 1.5px solid var(--pc-regular-color, var(--pc-regular-heat, var(--primary-text-color)));
+    border-radius: var(--pattern-card-cell-radius, 3px);
+  }
+  .has-rows .reg-run { height: 100%; min-height: 4px; }
+  .reg-run::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    border: 1px solid var(--pc-regular-gap, var(--ha-card-background, var(--card-background-color, #000)));
+    border-radius: max(0px, calc(var(--pattern-card-cell-radius, 3px) - 1.5px));
+  }
+  .reg-run.open-end, .reg-run.open-end::after {
+    border-inline-end-width: 0; border-start-end-radius: 0; border-end-end-radius: 0;
+  }
+  .reg-run.open-start, .reg-run.open-start::after {
+    border-inline-start-width: 0; border-start-start-radius: 0; border-end-start-radius: 0;
+  }
+  /* ohne Daten: eine feine Diagonale; Zellen mit gültigem Nullwert bleiben unverändert */
+  .cell.nodata {
+    background-image: linear-gradient(to top right,
+      transparent calc(50% - 0.6px),
+      var(--pc-nodata-line, color-mix(in srgb, var(--secondary-text-color) 45%, transparent)) 50%,
+      transparent calc(50% + 0.6px));
+  }
+  .legend .regular, .tooltip .marker.regular {
     box-shadow:
       inset 0 0 0 1.5px var(--pc-regular-color, var(--pc-regular-heat, var(--primary-text-color))),
       inset 0 0 0 2.5px var(--pc-regular-gap, var(--ha-card-background, var(--card-background-color, #000)));
@@ -1726,7 +1822,7 @@ class PatternCard extends HTMLElement {
   _renderShell() {
     const root = this.shadowRoot;
     if (!root.querySelector("ha-card")) {
-      root.innerHTML = `<style>${STYLE}</style><ha-card><h1 class="card-header"><div class="head"><span class="title"></span><a class="history"><ha-icon-next></ha-icon-next></a></div><span class="sub"></span></h1><div class="content has-header"></div><div class="tooltip" hidden></div><div class="probe"></div></ha-card>`;
+      root.innerHTML = `<style>${STYLE}</style><ha-card><h1 class="card-header"><div class="head"><span class="title"></span><a class="history"><ha-icon-next></ha-icon-next></a></div><span class="sub"></span></h1><div class="content has-header"></div><div class="tooltip" role="status" hidden></div><div class="probe"></div></ha-card>`;
     }
     this._renderHeader();
     const content = root.querySelector(".content");
@@ -1838,6 +1934,11 @@ class PatternCard extends HTMLElement {
       weekend,
       diffLess,
       diffMore,
+      // Hintergrund ohne Referenzdaten im Graph: Textfarbe des Themes, sehr schwach
+      noData: (() => {
+        const c = parseRgb(neutral);
+        return c ? rgbaString([c[0], c[1], c[2], 0.08]) : "rgba(128,128,128,0.08)";
+      })(),
       heat: user || defaultColor(st, kind, false),
     };
   }
@@ -2027,18 +2128,28 @@ class PatternCard extends HTMLElement {
     m.rows.forEach((row, ri) => {
       html += `<div class="wd" style="grid-row:${ri + 1};grid-column:1">${escapeHtml(rowLabel(row))}</div>`;
       row.cells.forEach((c, k) => {
-        const bg = c.value == null ? "" : ` style="background:${colorOf(c.value)}"`;
-        const cls = isRegular(c.reg, rc) ? "cell regular" : "cell";
-        html += `<div class="${cls}" data-r="${ri}" data-k="${k}"${bg}></div>`;
+        // feste Position: die Rahmen liegen als eigene Elemente über den Zellen im Raster
+        const pos = `grid-row:${ri + 1};grid-column:${k + 2}`;
+        const st = c.value == null ? ` style="${pos}"` : ` style="${pos};background:${colorOf(c.value)}"`;
+        let cls = isRegular(c.reg, rc) ? "cell regular" : "cell";
+        // ohne auswertbare Daten (kein Tag mit Wert); ein gültiger Nullwert hat einen Wert
+        if (c.value == null) cls += " nodata";
+        html += `<div class="${cls}" data-r="${ri}" data-k="${k}"${st}></div>`;
       });
     });
+    // ein Rahmen je Lauf benachbarter regelmäßiger Zellen, an Mitternacht zum Nachbartag offen
+    for (const run of regularRuns(m.rows, rc, S)) {
+      const open = `${run.openStart ? " open-start" : ""}${run.openEnd ? " open-end" : ""}`;
+      html += `<div class="reg-run${open}" aria-hidden="true" style="grid-row:${run.ri + 1};grid-column:${run.k0 + 2} / ${run.k1 + 3}"></div>`;
+    }
     let nRows = m.rows.length;
     if (diff) {
       nRows++;
       html += `<div class="wd diff" style="grid-row:${nRows};grid-column:1" title="${escapeHtml(diffTexts.label)}">Δ</div>`;
       diff.forEach((c, k) => {
-        const bg = c.value == null ? "" : ` style="background:${diffColor(c.value)}"`;
-        html += `<div class="cell diff" data-r="diff" data-k="${k}"${bg}></div>`;
+        const pos = `grid-row:${nRows};grid-column:${k + 2}`;
+        const st = c.value == null ? ` style="${pos}"` : ` style="${pos};background:${diffColor(c.value)}"`;
+        html += `<div class="cell diff${c.value == null ? " nodata" : ""}" data-r="diff" data-k="${k}"${st}></div>`;
       });
     }
     // Stundenbeschriftung alle 3 h
@@ -2099,8 +2210,8 @@ class PatternCard extends HTMLElement {
         const valueText = c.value == null ? "–" : withUnit(fmt(c.value), unit, unitOne);
         const color = c.value == null ? "var(--secondary-background-color)" : colorOf(c.value);
         const label = this._t(`stat_${m.statistic}`);
-        body = `${escapeHtml(rowLabel(row))} ${escapeHtml(time)}<br><span class="marker" style="background:${color}"></span>${escapeHtml(label)}: <span dir="ltr">${escapeHtml(valueText)}</span><br><span class="muted">${escapeHtml(this._t("avg_of_days", { n: c.n }))}</span>`;
-        if (rc && c.reg) body += this._regularityTip(c.reg, rc, row, m.statistic, fmt0);
+        body = `${escapeHtml(rowLabel(row))} ${escapeHtml(time)}<br><span class="marker" style="background:${color}"></span>${escapeHtml(label)}: <span dir="ltr">${escapeHtml(valueText)}</span><br><span class="muted">${escapeHtml(c.n ? this._t("avg_of_days", { n: c.n }) : this._t("no_data_slot"))}</span>`;
+        if (rc && c.reg && (c.n || c.reg.valid)) body += this._regularityTip(c.reg, rc, row, m.statistic, fmt0);
       }
       const tip = this.shadowRoot.querySelector(".tooltip");
       tip.innerHTML = body;
@@ -2129,6 +2240,34 @@ class PatternCard extends HTMLElement {
       if (pointerType !== "mouse" && cell?.classList?.contains("hover")) this._hideTooltip();
       else if (cell?.classList?.contains("cell")) show(cell);
       else if (pointerType !== "mouse") this._hideTooltip();
+    });
+    // Tastatur: das Raster ist ein Tab-Stopp, Pfeiltasten wandern durch die Zellen und zeigen
+    // deren Tooltip, Escape oder Verlassen blendet ihn aus
+    grid.tabIndex = 0;
+    grid.setAttribute("aria-label", this._t("heatmap_keys"));
+    const cellAt = (r, k) => grid.querySelector(`.cell[data-r="${r}"][data-k="${k}"]`);
+    const rowKeys = [...m.rows.map((_, i) => String(i)), ...(diff ? ["diff"] : [])];
+    let focusCell = null;
+    const move = (cell) => { if (cell) { focusCell = cell; show(cell); } };
+    grid.addEventListener("focus", () => {
+      let visible = false;
+      try { visible = grid.matches(":focus-visible"); } catch (e) { visible = false; }
+      if (visible) move(focusCell && grid.contains(focusCell) ? focusCell : cellAt(rowKeys[0], 0));
+    });
+    grid.addEventListener("blur", () => this._hideTooltip());
+    grid.addEventListener("keydown", (ev) => {
+      const cur = focusCell && grid.contains(focusCell) && !this.shadowRoot.querySelector(".tooltip").hidden ? focusCell : null;
+      if (ev.key === "Escape") { if (cur) { this._hideTooltip(); ev.preventDefault(); } return; }
+      const keys = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0], Home: [0, -S], End: [0, S] };
+      if (!(ev.key in keys) && ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      if (!cur) { move(focusCell && grid.contains(focusCell) ? focusCell : cellAt(rowKeys[0], 0)); return; }
+      if (!(ev.key in keys)) return;
+      const [dr, dk] = keys[ev.key];
+      const rtl = getComputedStyle(grid).direction === "rtl" ? -1 : 1;
+      const ri = Math.min(rowKeys.length - 1, Math.max(0, rowKeys.indexOf(cur.dataset.r) + dr));
+      const k = Math.min(S - 1, Math.max(0, Number(cur.dataset.k) + dk * (ev.key.startsWith("Arrow") ? rtl : 1)));
+      move(cellAt(rowKeys[ri], k));
     });
   }
 
@@ -2596,6 +2735,6 @@ if (window.__PATTERN_CARD_TEST__) window.__patternCard = {
   dayValues, cumulate, quantile, slotStats, computeModel, cssColor, defaultColor, parseRgb, interpolateStops,
   makeNumberFormatter, buildGraph, editorSchema, ensureChartBase, referenceGroups, heatmapRows, WORKDAYS, WEEKEND, bandsFor, dateKey, inGroup,
   axisFractionDigits, niceInterval, makeAxisFormatter, periodPlan, buildDaysFor,
-  regularityConfig, isRegular, slotRegularity, withUnit,
+  regularityConfig, isRegular, slotRegularity, withUnit, regularRuns, noDataRanges,
   parseWeekdays, weekdayGroups, isWeekdayCompare, hasCompare, migrateWeekdayCompare, daysLabel, EDITOR_TOP_FIELDS,
 };

@@ -69,3 +69,14 @@ Konzept „Produkt-Scope und nächster Entwicklungsauftrag“, Abschnitt 4. Luca
 3. Heute wird im Graph immer gezeigt, auch wenn es in keiner Gruppe liegt
 4. Der Editor zeichnet die Reihen selbst (Knöpfe im Stil der HA-Chips) in `ha-expansion-panel`, ohne HA-Element `<details>`
 5. YAML: `weekdays` bleibt Gruppe A, neu `weekdays_b` für Gruppe B
+
+### Nachtrag 2026-11-15: Rahmen, fehlende Daten, Tastatur (0.11.0)
+
+Scope „Pattern Card 0.11.0“ von Lucas, eigenständig umgesetzt bis zum Release (ausdrücklich ohne Zwischenfreigabe). Eigene Entscheidungen zur Prüfung:
+
+1. Rahmen als eigenes Element je Lauf über den Zellen, nicht als zusammengesetzte Zellränder: so läuft er über die Lücken zwischen den Zellen, und die Zellen bleiben unverändert
+2. Übergang an Mitternacht nur bei Zeilen aus genau einem Wochentag, nie bei Gruppen, auch nicht bei Gruppen aus einem Tag
+3. Fehlende Daten auch in der Differenzzeile markiert, wenn eine Seite fehlt; Tooltip „keine Daten“ statt „Ø aus 0 Tagen“ (Punkt 4 des Scopes: keine Zeile mehr, kürzer)
+4. Graph: Hintergrund über eine `custom`-Serie, weil HA `markArea` nicht registriert
+5. Tastatur in 0.11.0 statt 0.12.0: ein Tab-Stopp für das ganze Raster, Pfeiltasten bewegen die Auswahl (kein Tab-Stopp je Zelle, das wären 168 und mehr)
+6. Editor-Schalter heißt jetzt „Regelmäßigkeit hervorheben“, passend zur Legende

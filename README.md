@@ -161,9 +161,15 @@ regularity:
   threshold: 70
 ```
 
-The fill color still shows how many times the machine started on average. A thin border marks the slots where at least one start happened on at least 70 % of the comparable days, so a regular Saturday wash stands out from a single busy day. The tooltip adds the rate and the sample, e.g. "Regularity: 75 % · Event on 6 of 8 Saturdays". With `statistic: active` the border means "active at some point in the slot" instead.
+The fill color still shows how many times the machine started on average. A thin border marks the slots where at least one start happened on at least 70 % of the comparable days, so a regular Saturday wash stands out from a single busy day. Neighbouring regular slots share one border, so a recurring evening reads as one block. The legend just says "Regularity (70%)"; the tooltip adds the rate and the sample, e.g. "Regularity: 75 % · Event on 6 of 8 Saturdays". With `statistic: active` the border means "active at some point in the slot" instead.
 
-![Heatmap with a border around a recurring slot](docs/images/heatmap-regularity.png)
+When the last slot of a day and the first slot of the next day are both regular, the border stays open at midnight on both rows, e.g. a workshop light on Friday from 22:00 to 02:00. This only says that both neighbouring slots are regular, not that one session ran through midnight. Rows are only linked across midnight if they really are consecutive weekdays (Sunday → Monday included); comparison groups and filtered days with a gap stay closed.
+
+![Heatmap with a border open at midnight from Friday night into Saturday](docs/images/heatmap-regularity.png)
+
+### Missing data
+
+A heatmap cell without any data for that weekday and time (a new sensor, a recorder gap) gets a fine diagonal line, and its tooltip says "no data". A cell that has data but a value of 0 keeps the normal lowest color. In the graph, time ranges where the reference has no value at all get a faint grey background; ranges with only a few days of data are not marked.
 
 ## Options
 
@@ -214,6 +220,7 @@ All options can also be set in the visual editor.
 - **History only reaches back as far as the recorder keeps it** (`recorder: purge_keep_days`, 10 days by default). For a longer reference, raise it. Long-term statistics are kept indefinitely (hourly), so a `before_after` date far in the past works best with measurements and counters.
 - **Resolution**: the 5-minute statistics are kept for the same time as the history. If they do not cover the whole period, the graph falls back to hourly values and says so below the title.
 - **Today is never part of the reference.** The heatmap only uses completed time slots.
+- **Keyboard**: the heatmap is one tab stop. Arrow keys (Home/End within a row) move through the cells and show their tooltip, Escape closes it.
 - **Time slots follow the wall clock** in the time zone of your profile; days with a daylight saving change are handled.
 - **Attributes are not supported.** To analyse one, create a template sensor with a `state_class`, so it also gets long-term statistics.
 
